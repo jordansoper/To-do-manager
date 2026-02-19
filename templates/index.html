@@ -1,0 +1,573 @@
+{# Recursive macro for rendering todos - must be defined before use #}
+{% macro render_todo(todo) %}
+<li class="todo-item {{ 'completed' if todo.completed }}">
+    <div class="todo-main" id="todo-main-{{ todo.id }}">
+        <form method="POST" action="/toggle/{{ todo.id }}" style="display:flex;align-items:center;">
+            <input type="checkbox" class="todo-checkbox" {{ 'checked' if todo.completed }}>
+        </form>
+        <div class="todo-content">
+            <div class="todo-title">{{ todo.title }}</div>
+            {% if todo.description %}
+                <div class="todo-description">{{ todo.description }}</div>
+            {% endif %}
+            <div class="todo-meta">
+                {% if todo.recurrence %}
+                    <span class="badge badge-recurrence">{{ todo.recurrence }}</span>
+                {% endif %}
+                {% if todo.due_date %}
+                    <span class="badge badge-due {{ 'overdue' if todo.due_date < now_date }}">Due {{ todo.due_date }}</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="todo-actions">
+            <button class="btn btn-ghost" onclick="toggleEditForm({{ todo.id }})" title="Edit">Edit</button>
+            <button class="btn btn-ghost" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            <button class="btn btn-danger" onclick="confirmDelete({{ todo.id }})" title="Delete">Del</button>
+            <form id="delete-form-{{ todo.id }}" method="POST" action="/delete/{{ todo.id }}" style="display:none;"></form>
+        </div>
+    </div>
+
+    <!-- Edit form -->
+    <div class="edit-form" id="edit-form-{{ todo.id }}">
+        <form method="POST" action="/edit/{{ todo.id }}">
+            <div class="form-row">
+                <input type="text" name="title" value="{{ todo.title }}" required>
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-ghost" onclick="toggleEditForm({{ todo.id }})">Cancel</button>
+            </div>
+            <div class="form-row">
+                <input type="text" name="description" value="{{ todo.description or '' }}" placeholder="Description">
+            </div>
+            {% if not todo.parent_id %}
+            <div class="form-row">
+                <select name="recurrence">
+                    <option value="">No repeat</option>
+                    <option value="daily" {{ 'selected' if todo.recurrence == 'daily' }}>Daily</option>
+                    <option value="weekly" {{ 'selected' if todo.recurrence == 'weekly' }}>Weekly</option>
+                    <option value="monthly" {{ 'selected' if todo.recurrence == 'monthly' }}>Monthly</option>
+                    <option value="yearly" {{ 'selected' if todo.recurrence == 'yearly' }}>Yearly</option>
+                </select>
+                <input type="date" name="due_date" value="{{ todo.due_date or '' }}">
+            </div>
+            {% endif %}
+        </form>
+    </div>
+
+    {% if todo.children %}
+    <!-- Progress bar -->
+    <div class="todo-progress">
+        {% set total = todo.children | length %}
+        {% set done = todo.children | selectattr('completed') | list | length %}
+        <div class="progress-bar-bg">
+            <div class="progress-bar-fill" style="width: {{ (done / total * 100) if total else 0 }}%"></div>
+        </div>
+        <div class="progress-text">{{ done }}/{{ total }} sub-tasks completed</div>
+    </div>
+
+    <ul class="todo-children">
+        {% for child in todo.children %}
+            {{ render_todo(child) }}
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <!-- Add sub-todo -->
+    <div class="add-subtodo">
+        <button class="add-subtodo-btn" onclick="toggleSubtodoForm({{ todo.id }})">+ Add sub-task</button>
+        <div class="add-subtodo-form" id="subtodo-form-{{ todo.id }}">
+            <form method="POST" action="/add" style="display:flex;gap:0.5rem;flex:1;">
+                <input type="hidden" name="parent_id" value="{{ todo.id }}">
+                <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off" style="flex:1;">
+                <button type="submit" class="btn btn-primary">Add</button>
+            </form>
+        </div>
+    </div>
+</li>
+{% endmacro %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do Manager</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface-hover: #222632;
+            --border: #2a2e3b;
+            --text: #e4e4e7;
+            --text-muted: #71717a;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --danger-hover: #f87171;
+            --warning: #f59e0b;
+            --radius: 8px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            color: var(--text);
+        }
+
+        /* Add Todo Form */
+        .add-form {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .add-form h2 {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .form-row:last-child {
+            margin-bottom: 0;
+        }
+
+        input[type="text"],
+        input[type="date"],
+        select,
+        textarea {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        input[type="text"]:focus,
+        input[type="date"]:focus,
+        select:focus,
+        textarea:focus {
+            border-color: var(--accent);
+        }
+
+        input[type="text"] {
+            flex: 1;
+        }
+
+        textarea {
+            width: 100%;
+            resize: vertical;
+            min-height: 2.5rem;
+            max-height: 6rem;
+        }
+
+        select {
+            min-width: 120px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, opacity 0.15s;
+            font-family: inherit;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-muted);
+            padding: 0.35rem 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .btn-ghost:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        .btn-danger {
+            background: transparent;
+            color: var(--text-muted);
+            padding: 0.35rem 0.5rem;
+            font-size: 0.8rem;
+        }
+
+        .btn-danger:hover {
+            color: var(--danger);
+            background: var(--surface-hover);
+        }
+
+        /* Todo List */
+        .todo-list {
+            list-style: none;
+        }
+
+        .todo-item {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 0.5rem;
+            overflow: hidden;
+        }
+
+        .todo-main {
+            display: flex;
+            align-items: flex-start;
+            padding: 0.875rem 1rem;
+            gap: 0.75rem;
+        }
+
+        .todo-checkbox {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            min-width: 20px;
+            border: 2px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            margin-top: 1px;
+            transition: all 0.15s;
+        }
+
+        .todo-checkbox:hover {
+            border-color: var(--accent);
+        }
+
+        .todo-checkbox:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .todo-checkbox:checked::after {
+            content: '';
+            position: absolute;
+            left: 5px;
+            top: 1px;
+            width: 5px;
+            height: 10px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+        }
+
+        .todo-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .todo-title {
+            font-size: 0.9375rem;
+            font-weight: 500;
+            word-break: break-word;
+        }
+
+        .todo-item.completed .todo-title {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+
+        .todo-description {
+            font-size: 0.8125rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+            word-break: break-word;
+        }
+
+        .todo-meta {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.375rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.6875rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 999px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .badge-recurrence {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-hover);
+        }
+
+        .badge-due {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+
+        .badge-due.overdue {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+
+        .todo-actions {
+            display: flex;
+            gap: 0.25rem;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .todo-main:hover .todo-actions {
+            opacity: 1;
+        }
+
+        .todo-progress {
+            padding: 0 1rem 0.5rem 2.75rem;
+        }
+
+        .progress-bar-bg {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.6875rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Nested children */
+        .todo-children {
+            list-style: none;
+            margin-left: 1.5rem;
+            border-left: 2px solid var(--border);
+            padding-left: 0.75rem;
+            padding-bottom: 0.5rem;
+        }
+
+        .todo-children .todo-item {
+            border: none;
+            background: transparent;
+            margin-bottom: 0;
+        }
+
+        .todo-children .todo-main {
+            padding: 0.5rem 0.5rem;
+            border-radius: var(--radius);
+        }
+
+        .todo-children .todo-main:hover {
+            background: var(--surface-hover);
+        }
+
+        /* Add sub-todo inline */
+        .add-subtodo {
+            padding: 0.5rem 1rem 0.75rem 2.75rem;
+        }
+
+        .add-subtodo-form {
+            display: none;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .add-subtodo-form.active {
+            display: flex;
+        }
+
+        .add-subtodo-btn {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0.25rem 0;
+            font-family: inherit;
+        }
+
+        .add-subtodo-btn:hover {
+            color: var(--accent);
+        }
+
+        /* Edit form inline */
+        .edit-form {
+            display: none;
+            padding: 0.75rem 1rem;
+            gap: 0.5rem;
+            flex-direction: column;
+        }
+
+        .edit-form.active {
+            display: flex;
+        }
+
+        .edit-form .form-row {
+            margin-bottom: 0;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-muted);
+        }
+
+        .empty-state p {
+            font-size: 0.9375rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            body {
+                padding: 1rem 0.5rem;
+            }
+
+            .form-row {
+                flex-wrap: wrap;
+            }
+
+            select, input[type="date"] {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .todo-actions {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>To-Do Manager</h1>
+
+        <!-- Add Todo Form -->
+        <div class="add-form">
+            <h2>New Task</h2>
+            <form method="POST" action="/add">
+                <div class="form-row">
+                    <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </div>
+                <div class="form-row">
+                    <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
+                </div>
+                <div class="form-row">
+                    <select name="recurrence">
+                        <option value="">No repeat</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                    <input type="date" name="due_date" title="Due date">
+                </div>
+            </form>
+        </div>
+
+        <!-- Todo List -->
+        {% if todos %}
+        <ul class="todo-list">
+            {% for todo in todos %}
+                {{ render_todo(todo) }}
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty-state">
+            <p>No tasks yet. Add one above to get started.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        function toggleSubtodoForm(id) {
+            const form = document.getElementById('subtodo-form-' + id);
+            form.classList.toggle('active');
+            if (form.classList.contains('active')) {
+                form.querySelector('input[name="title"]').focus();
+            }
+        }
+
+        function toggleEditForm(id) {
+            const form = document.getElementById('edit-form-' + id);
+            const main = document.getElementById('todo-main-' + id);
+            form.classList.toggle('active');
+            if (form.classList.contains('active')) {
+                main.style.display = 'none';
+                form.querySelector('input[name="title"]').focus();
+            } else {
+                main.style.display = 'flex';
+            }
+        }
+
+        function confirmDelete(id) {
+            if (confirm('Delete this task and all sub-tasks?')) {
+                document.getElementById('delete-form-' + id).submit();
+            }
+        }
+
+        // Submit checkbox toggle via form
+        document.querySelectorAll('.todo-checkbox').forEach(cb => {
+            cb.addEventListener('change', function () {
+                this.closest('form').submit();
+            });
+        });
+    </script>
+</body>
+</html>
