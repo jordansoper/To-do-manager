@@ -227,24 +227,23 @@ def uncomplete_recursive(db, todo_id):
 
 
 def handle_recurrence(db, todo_id):
-    """If a completed todo has recurrence, reset it and set next due date."""
-    todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
-    if not todo:
+    """If a completed todo's root has recurrence, reset it and set next due date."""
+    # Walk to the top-level ancestor first, regardless of which task was toggled
+    current = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if not current:
         return
-    if not todo["recurrence"] and not todo["recurrence_interval"]:
-        return
-
-    # Find the top-level ancestor to check recurrence at the root
-    root_id = todo_id
-    current = todo
     while current["parent_id"]:
         current = db.execute(
             "SELECT * FROM todos WHERE id = ?", (current["parent_id"],)
         ).fetchone()
-        root_id = current["id"]
 
-    root = db.execute("SELECT * FROM todos WHERE id = ?", (root_id,)).fetchone()
+    root = current
+    root_id = root["id"]
+
+    # Only act if the root is completed and has recurrence set
     if not root["completed"]:
+        return
+    if not root["recurrence"] and not root["recurrence_interval"]:
         return
 
     if root["recurrence_interval"]:
