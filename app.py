@@ -69,7 +69,7 @@ def init_db():
     # Ensure default header setting exists
     existing = db.execute("SELECT key FROM settings WHERE key = 'header'").fetchone()
     if not existing:
-        db.execute("INSERT INTO settings (key, value) VALUES ('header', 'To-Do Manager')")
+        db.execute("INSERT INTO settings (key, value) VALUES ('header', 'To-Doer')")
     # Add list_id column if upgrading from old schema
     try:
         db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")

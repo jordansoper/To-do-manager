@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# To-Do Manager - Install Script
+# To-Doer - Install Script
 # Designed for Debian/Ubuntu-based LXC containers (Proxmox)
 # ============================================================================
 
@@ -44,7 +44,7 @@ chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 echo "==> Installing systemd service..."
 cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=To-Do Manager
+Description=To-Doer
 After=network.target
 
 [Service]
@@ -72,7 +72,7 @@ systemctl start "$SERVICE_NAME"
 
 echo ""
 echo "============================================"
-echo "  To-Do Manager installed successfully!"
+echo "  To-Doer installed successfully!"
 echo "  Access at: http://$(hostname -I | awk '{print $1}'):5000"
 echo "  Service:   systemctl status $SERVICE_NAME"
 echo "  Logs:      journalctl -u $SERVICE_NAME -f"

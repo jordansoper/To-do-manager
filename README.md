@@ -1,6 +1,6 @@
-# To-Do Manager
+# To-Doer
 
-A self-hosted to-do list application with support for **nested sub-tasks** and **recurring tasks**.
+A self-hosted task management application with support for **nested sub-tasks** and **recurring tasks**.
 
 ## Features
 
@@ -110,7 +110,7 @@ The entire database is a single SQLite file:
 /opt/todo-manager/instance/todos.db
 ```
 
-Copy this file to back up all your to-dos.
+Copy this file to back up all your tasks.
 
 ---
 

@@ -19,4 +19,4 @@ rm -rf "$APP_DIR"
 echo "==> Removing application user..."
 userdel "$APP_USER" 2>/dev/null || true
 
-echo "==> Done. To-Do Manager has been uninstalled."
+echo "==> Done. To-Doer has been uninstalled."
