@@ -1,18 +1,25 @@
-{# Recursive macro for rendering todos - must be defined before use #}
-{% macro render_todo(todo) %}
+{# Recursive macro for rendering todos #}
+{% macro render_todo(todo, depth=0) %}
 <li class="todo-item {{ 'completed' if todo.completed }}">
     <div class="todo-main" id="todo-main-{{ todo.id }}">
         <form method="POST" action="/toggle/{{ todo.id }}" style="display:flex;align-items:center;">
             <input type="checkbox" class="todo-checkbox" {{ 'checked' if todo.completed }}>
         </form>
         <div class="todo-content">
-            <div class="todo-title">{{ todo.title }}</div>
+            <div class="todo-title">
+                {{ todo.title }}
+                {% if current_list_id == 0 and todo.list_id and depth == 0 %}
+                    <span class="badge badge-list">{{ lists_dict.get(todo.list_id, 'Unknown') }}</span>
+                {% endif %}
+            </div>
             {% if todo.description %}
                 <div class="todo-description">{{ todo.description }}</div>
             {% endif %}
             <div class="todo-meta">
                 {% if todo.recurrence %}
-                    <span class="badge badge-recurrence">{{ todo.recurrence }}</span>
+                    <span class="badge badge-recurrence">{{ todo.recurrence }}{% if todo.recurrence == 'weekly' and todo.recurrence_day is not none %} {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][todo.recurrence_day] }}{% endif %}</span>
+                {% elif todo.recurrence_interval %}
+                    <span class="badge badge-recurrence">Every {{ todo.recurrence_interval }} days</span>
                 {% endif %}
                 {% if todo.due_date %}
                     <span class="badge badge-due {{ 'overdue' if todo.due_date < now_date }}">Due {{ todo.due_date }}</span>
@@ -21,7 +28,11 @@
         </div>
         <div class="todo-actions">
             <button class="btn btn-ghost" onclick="toggleEditForm({{ todo.id }})" title="Edit">Edit</button>
-            <button class="btn btn-ghost" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% if depth == 0 %}
+                <button class="btn btn-ghost" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% else %}
+                <button class="btn btn-ghost subtask-nested-btn" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% endif %}
             <button class="btn btn-danger" onclick="confirmDelete({{ todo.id }})" title="Delete">Del</button>
             <form id="delete-form-{{ todo.id }}" method="POST" action="/delete/{{ todo.id }}" style="display:none;"></form>
         </div>
@@ -40,13 +51,20 @@
             </div>
             {% if not todo.parent_id %}
             <div class="form-row">
-                <select name="recurrence">
+                <select name="recurrence" onchange="onRecurrenceChange(this, 'edit-{{ todo.id }}')">
                     <option value="">No repeat</option>
                     <option value="daily" {{ 'selected' if todo.recurrence == 'daily' }}>Daily</option>
                     <option value="weekly" {{ 'selected' if todo.recurrence == 'weekly' }}>Weekly</option>
                     <option value="monthly" {{ 'selected' if todo.recurrence == 'monthly' }}>Monthly</option>
                     <option value="yearly" {{ 'selected' if todo.recurrence == 'yearly' }}>Yearly</option>
+                    <option value="every_n_days" {{ 'selected' if todo.recurrence_interval }}>Every N days</option>
                 </select>
+                <select name="recurrence_day" class="recurrence-day" id="recurrence-day-edit-{{ todo.id }}" style="{{ 'display:none' if todo.recurrence != 'weekly' }}">
+                    {% for i, day in [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
+                    <option value="{{ i }}" {{ 'selected' if todo.recurrence_day == i }}>{{ day }}</option>
+                    {% endfor %}
+                </select>
+                <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-edit-{{ todo.id }}" min="1" placeholder="Days" value="{{ todo.recurrence_interval or '' }}" style="{{ 'display:none' if not todo.recurrence_interval }}">
                 <input type="date" name="due_date" value="{{ todo.due_date or '' }}">
             </div>
             {% endif %}
@@ -66,17 +84,17 @@
 
     <ul class="todo-children">
         {% for child in todo.children %}
-            {{ render_todo(child) }}
+            {{ render_todo(child, depth + 1) }}
         {% endfor %}
     </ul>
     {% endif %}
 
-    <!-- Add sub-todo -->
-    <div class="add-subtodo">
-        <button class="add-subtodo-btn" onclick="toggleSubtodoForm({{ todo.id }})">+ Add sub-task</button>
+    <!-- Add sub-todo (inline, right-aligned) -->
+    <div class="add-subtodo" id="subtodo-area-{{ todo.id }}">
         <div class="add-subtodo-form" id="subtodo-form-{{ todo.id }}">
             <form method="POST" action="/add" style="display:flex;gap:0.5rem;flex:1;">
                 <input type="hidden" name="parent_id" value="{{ todo.id }}">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
                 <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off" style="flex:1;">
                 <button type="submit" class="btn btn-primary">Add</button>
             </form>
@@ -90,7 +108,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>To-Do Manager</title>
+    <meta name="theme-color" content="#6366f1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon/192" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon/192">
+    <title>{{ header }}</title>
     <style>
         :root {
             --bg: #0f1117;
@@ -106,6 +130,7 @@
             --danger-hover: #f87171;
             --warning: #f59e0b;
             --radius: 8px;
+            --sidebar-width: 240px;
         }
 
         * {
@@ -119,22 +144,256 @@
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 2rem 1rem;
+            display: flex;
         }
 
-        .container {
-            max-width: 720px;
-            margin: 0 auto;
+        /* ===== Sidebar ===== */
+        .sidebar {
+            width: var(--sidebar-width);
+            min-width: var(--sidebar-width);
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: sticky;
+            top: 0;
         }
 
-        h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 1.5rem;
+        .sidebar-header {
+            padding: 0 1rem 1rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .sidebar-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin: 0;
+        }
+
+        .sidebar-lists {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 0.5rem;
+        }
+
+        .sidebar-list-item {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-decoration: none;
+            transition: background 0.15s, color 0.15s;
+            gap: 0.5rem;
+            position: relative;
+        }
+
+        .sidebar-list-item:hover {
+            background: var(--surface-hover);
             color: var(--text);
         }
 
-        /* Add Todo Form */
+        .sidebar-list-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-hover);
+        }
+
+        .sidebar-list-icon {
+            font-size: 1rem;
+            width: 20px;
+            text-align: center;
+        }
+
+        .sidebar-list-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sidebar-list-actions {
+            display: none;
+            gap: 0.25rem;
+        }
+
+        .sidebar-list-item:hover .sidebar-list-actions {
+            display: flex;
+        }
+
+        .sidebar-list-action-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 0.15rem 0.25rem;
+            border-radius: 3px;
+            line-height: 1;
+        }
+
+        .sidebar-list-action-btn:hover {
+            color: var(--text);
+            background: var(--border);
+        }
+
+        .sidebar-list-action-btn.delete-btn:hover {
+            color: var(--danger);
+        }
+
+        .sidebar-add-list {
+            padding: 0.75rem 0.5rem 0;
+            border-top: 1px solid var(--border);
+            margin-top: 0.5rem;
+        }
+
+        .sidebar-add-list form {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .sidebar-add-list input {
+            flex: 1;
+            min-width: 0;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 0.35rem 0.5rem;
+            font-size: 0.8rem;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .sidebar-add-list input:focus {
+            border-color: var(--accent);
+        }
+
+        .sidebar-add-list button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            padding: 0.35rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .sidebar-add-list button:hover {
+            background: var(--accent-hover);
+        }
+
+        /* ===== Main Content ===== */
+        .main-content {
+            flex: 1;
+            padding: 2rem 1.5rem;
+            max-width: 800px;
+            min-width: 0;
+        }
+
+        /* ===== Configurable Header ===== */
+        .app-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            cursor: pointer;
+            padding: 0.35rem 0.6rem;
+            line-height: 1;
+        }
+
+        .mobile-menu-btn:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        @media (max-width: 768px) {
+            .mobile-menu-btn {
+                display: block;
+            }
+        }
+
+        .app-header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .app-header h1:hover {
+            color: var(--accent-hover);
+        }
+
+        .header-edit-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.4rem;
+            border-radius: 3px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .app-header:hover .header-edit-btn {
+            opacity: 1;
+        }
+
+        .header-edit-btn:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        .header-edit-form {
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .header-edit-form.active {
+            display: flex;
+        }
+
+        .header-edit-form input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            font-size: 1.25rem;
+            font-weight: 700;
+            font-family: inherit;
+            outline: none;
+            flex: 1;
+        }
+
+        .header-edit-form input:focus {
+            border-color: var(--accent);
+        }
+
+        /* ===== Add Todo Form / Modal ===== */
         .add-form {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -144,6 +403,71 @@
         }
 
         .add-form h2 {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .add-task-trigger {
+            display: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .add-task-trigger.visible {
+            display: block;
+        }
+
+        .add-task-trigger-btn {
+            background: var(--surface);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            padding: 0.75rem 1rem;
+            width: 100%;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-family: inherit;
+            text-align: left;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .add-task-trigger-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        /* Modal overlay */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: 90%;
+            max-width: 520px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content h2 {
             font-size: 0.75rem;
             font-weight: 600;
             margin-bottom: 1rem;
@@ -247,7 +571,7 @@
             background: var(--surface-hover);
         }
 
-        /* Todo List */
+        /* ===== Todo List ===== */
         .todo-list {
             list-style: none;
         }
@@ -310,6 +634,10 @@
             font-size: 0.9375rem;
             font-weight: 500;
             word-break: break-word;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .todo-item.completed .todo-title {
@@ -368,6 +696,15 @@
             opacity: 1;
         }
 
+        /* Hide nested sub-task button unless hovered */
+        .subtask-nested-btn {
+            display: none !important;
+        }
+
+        .todo-main:hover .subtask-nested-btn {
+            display: inline-flex !important;
+        }
+
         .todo-progress {
             padding: 0 1rem 0.5rem 2.75rem;
         }
@@ -418,31 +755,16 @@
 
         /* Add sub-todo inline */
         .add-subtodo {
-            padding: 0.5rem 1rem 0.75rem 2.75rem;
+            padding: 0 1rem 0.5rem 2.75rem;
         }
 
         .add-subtodo-form {
             display: none;
             gap: 0.5rem;
-            margin-top: 0.5rem;
         }
 
         .add-subtodo-form.active {
             display: flex;
-        }
-
-        .add-subtodo-btn {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 0.25rem 0;
-            font-family: inherit;
-        }
-
-        .add-subtodo-btn:hover {
-            color: var(--accent);
         }
 
         /* Edit form inline */
@@ -461,6 +783,67 @@
             margin-bottom: 0;
         }
 
+        /* ===== Completed Section ===== */
+        .completed-section {
+            margin-top: 2rem;
+            border-top: 1px solid var(--border);
+            padding-top: 1rem;
+        }
+
+        .completed-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.8125rem;
+            font-family: inherit;
+            padding: 0.5rem 0;
+            width: 100%;
+            text-align: left;
+        }
+
+        .completed-toggle:hover {
+            color: var(--text);
+        }
+
+        .completed-toggle-arrow {
+            display: inline-block;
+            transition: transform 0.2s;
+            font-size: 0.7rem;
+        }
+
+        .completed-toggle-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .completed-count {
+            background: var(--border);
+            padding: 0.1rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+        }
+
+        .completed-list {
+            display: none;
+            list-style: none;
+            margin-top: 0.5rem;
+        }
+
+        .completed-list.expanded {
+            display: block;
+        }
+
+        .completed-list .todo-item {
+            opacity: 0.7;
+        }
+
+        .completed-list .todo-item:hover {
+            opacity: 1;
+        }
+
         /* Empty state */
         .empty-state {
             text-align: center;
@@ -472,9 +855,146 @@
             font-size: 0.9375rem;
         }
 
-        /* Responsive */
+        /* ===== List rename modal ===== */
+        .rename-modal .modal-content {
+            max-width: 360px;
+        }
+
+        .rename-modal form {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .rename-modal input {
+            flex: 1;
+        }
+
+        /* ===== Sidebar toggle & overlay ===== */
+        .sidebar-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            cursor: pointer;
+            padding: 0.25rem 0.4rem;
+            border-radius: var(--radius);
+            flex-shrink: 0;
+        }
+
+        .sidebar-toggle:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        /* Collapsed sidebar (desktop) */
+        body.sidebar-collapsed .sidebar {
+            width: 0;
+            min-width: 0;
+            padding: 0;
+            overflow: hidden;
+            border-right: none;
+        }
+
+        body.sidebar-collapsed .main-content {
+            max-width: 960px;
+        }
+
+        /* Collapse toggle button in header (desktop only) */
+        .desktop-sidebar-toggle {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.1rem;
+            cursor: pointer;
+            padding: 0.25rem 0.4rem;
+            border-radius: var(--radius);
+            line-height: 1;
+            flex-shrink: 0;
+        }
+
+        .desktop-sidebar-toggle:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        @media (max-width: 768px) {
+            .desktop-sidebar-toggle {
+                display: none;
+            }
+        }
+
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 49;
+        }
+
+        .sidebar-overlay.active {
+            display: block;
+        }
+
+        /* List badge (shown in All Tasks view) */
+        .badge-list {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--accent-hover);
+        }
+
+        /* Recurrence day & interval inputs */
+        .recurrence-day, .recurrence-interval {
+            min-width: 100px;
+        }
+
+        .recurrence-interval {
+            width: 80px;
+            min-width: 60px;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                width: var(--sidebar-width);
+                min-width: var(--sidebar-width);
+                transform: translateX(-100%);
+                transition: transform 0.25s ease;
+                z-index: 50;
+                padding: 1rem 0;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: block;
+            }
+
+            .sidebar-title {
+                display: block;
+            }
+
+            .main-content {
+                padding: 1.5rem 1rem;
+                margin-left: 0;
+            }
+
+            /* Show a fixed hamburger when sidebar is closed */
+            .mobile-menu-btn {
+                display: block;
+            }
+        }
+
         @media (max-width: 480px) {
-            body {
+            .main-content {
                 padding: 1rem 0.5rem;
             }
 
@@ -490,17 +1010,82 @@
             .todo-actions {
                 opacity: 1;
             }
+
+            .subtask-nested-btn {
+                display: inline-flex !important;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>To-Do Manager</h1>
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
-        <!-- Add Todo Form -->
-        <div class="add-form">
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#9776;</button>
+            <h2 class="sidebar-title">Lists</h2>
+        </div>
+        <div class="sidebar-lists">
+            <a href="/?list=0"
+               class="sidebar-list-item {{ 'active' if current_list_id == 0 }}">
+                <span class="sidebar-list-icon">&#9733;</span>
+                <span class="sidebar-list-name">All Tasks</span>
+            </a>
+            {% for list in lists %}
+            <a href="/?list={{ list.id }}"
+               class="sidebar-list-item {{ 'active' if list.id == current_list_id }}">
+                <span class="sidebar-list-icon">&#9776;</span>
+                <span class="sidebar-list-name">{{ list.name }}</span>
+                {% if list.id != 1 %}
+                <span class="sidebar-list-actions">
+                    <button type="button" class="sidebar-list-action-btn"
+                            onclick="event.preventDefault();event.stopPropagation();openRenameModal({{ list.id }}, '{{ list.name | e }}')"
+                            title="Rename">&#9998;</button>
+                    <button type="button" class="sidebar-list-action-btn delete-btn"
+                            onclick="event.preventDefault();event.stopPropagation();confirmDeleteList({{ list.id }}, '{{ list.name | e }}')"
+                            title="Delete">&#10005;</button>
+                    <form id="delete-list-form-{{ list.id }}" method="POST" action="/lists/delete/{{ list.id }}" style="display:none;"></form>
+                </span>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+        <div class="sidebar-add-list">
+            <form method="POST" action="/lists/add">
+                <input type="text" name="name" placeholder="New list..." required autocomplete="off">
+                <button type="submit">+</button>
+            </form>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Configurable Header -->
+        <div class="app-header" id="app-header">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()" title="Open menu">&#9776;</button>
+            <button class="desktop-sidebar-toggle" onclick="toggleDesktopSidebar()" title="Toggle sidebar">&#9776;</button>
+            <h1 onclick="showHeaderEdit()">{{ header }}</h1>
+            <button class="header-edit-btn" onclick="showHeaderEdit()" title="Edit header">&#9998;</button>
+        </div>
+        <div class="header-edit-form" id="header-edit-form">
+            <form method="POST" action="/settings/header" style="display:flex;gap:0.5rem;flex:1;">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                <input type="text" name="header" value="{{ header }}" required>
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-ghost" onclick="hideHeaderEdit()">Cancel</button>
+            </form>
+        </div>
+
+        <!-- Add Task: inline for empty, popup trigger when items exist -->
+        {% set has_items = active_todos | length > 0 or completed_todos | length > 0 %}
+
+        {% if not has_items %}
+        <div class="add-form" id="add-form-inline">
             <h2>New Task</h2>
             <form method="POST" action="/add">
+                <input type="hidden" name="list_id" value="{{ current_list_id if current_list_id != 0 else 1 }}">
                 <div class="form-row">
                     <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
                     <button type="submit" class="btn btn-primary">Add</button>
@@ -509,33 +1094,136 @@
                     <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
                 </div>
                 <div class="form-row">
-                    <select name="recurrence">
+                    <select name="recurrence" onchange="onRecurrenceChange(this, 'inline')">
                         <option value="">No repeat</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>
                         <option value="yearly">Yearly</option>
+                        <option value="every_n_days">Every N days</option>
                     </select>
+                    <select name="recurrence_day" class="recurrence-day" id="recurrence-day-inline" style="display:none">
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                    <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-inline" min="1" placeholder="Days" style="display:none">
                     <input type="date" name="due_date" title="Due date">
                 </div>
+                {% if current_list_id == 0 %}
+                <div class="form-row">
+                    <select name="list_id">
+                        {% for list in lists %}
+                        <option value="{{ list.id }}">{{ list.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
             </form>
         </div>
+        {% endif %}
 
-        <!-- Todo List -->
-        {% if todos %}
+        {% if has_items %}
+        <div class="add-task-trigger visible" id="add-task-trigger">
+            <button class="add-task-trigger-btn" onclick="openAddModal()">+ Add new task...</button>
+        </div>
+        {% endif %}
+
+        <!-- Todo List (active only) -->
+        {% if active_todos %}
         <ul class="todo-list">
-            {% for todo in todos %}
-                {{ render_todo(todo) }}
+            {% for todo in active_todos %}
+                {{ render_todo(todo, 0) }}
             {% endfor %}
         </ul>
-        {% else %}
+        {% elif not has_items %}
         <div class="empty-state">
             <p>No tasks yet. Add one above to get started.</p>
         </div>
         {% endif %}
+
+        <!-- Completed Section (collapsed) -->
+        {% if completed_todos %}
+        <div class="completed-section">
+            <button class="completed-toggle" onclick="toggleCompleted()">
+                <span class="completed-toggle-arrow" id="completed-arrow">&#9654;</span>
+                Completed
+                <span class="completed-count">{{ completed_todos | length }}</span>
+            </button>
+            <ul class="completed-list todo-list" id="completed-list">
+                {% for todo in completed_todos %}
+                    {{ render_todo(todo, 0) }}
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="add-modal" onclick="closeAddModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>New Task</h2>
+            <form method="POST" action="/add">
+                <input type="hidden" name="list_id" value="{{ current_list_id if current_list_id != 0 else 1 }}">
+                <div class="form-row">
+                    <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off" id="modal-title-input">
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </div>
+                <div class="form-row">
+                    <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
+                </div>
+                <div class="form-row">
+                    <select name="recurrence" onchange="onRecurrenceChange(this, 'modal')">
+                        <option value="">No repeat</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="every_n_days">Every N days</option>
+                    </select>
+                    <select name="recurrence_day" class="recurrence-day" id="recurrence-day-modal" style="display:none">
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                    <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-modal" min="1" placeholder="Days" style="display:none">
+                    <input type="date" name="due_date" title="Due date">
+                </div>
+                {% if current_list_id == 0 %}
+                <div class="form-row">
+                    <select name="list_id">
+                        {% for list in lists %}
+                        <option value="{{ list.id }}">{{ list.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
+    <!-- Rename List Modal -->
+    <div class="modal-overlay rename-modal" id="rename-modal" onclick="closeRenameModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>Rename List</h2>
+            <form method="POST" id="rename-form" action="">
+                <input type="text" name="name" id="rename-input" required autocomplete="off">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-ghost" onclick="closeRenameModal()">Cancel</button>
+            </form>
+        </div>
     </div>
 
     <script>
+        // Subtodo form toggle
         function toggleSubtodoForm(id) {
             const form = document.getElementById('subtodo-form-' + id);
             form.classList.toggle('active');
@@ -544,6 +1232,7 @@
             }
         }
 
+        // Edit form toggle
         function toggleEditForm(id) {
             const form = document.getElementById('edit-form-' + id);
             const main = document.getElementById('todo-main-' + id);
@@ -556,18 +1245,125 @@
             }
         }
 
+        // Delete confirmation
         function confirmDelete(id) {
             if (confirm('Delete this task and all sub-tasks?')) {
                 document.getElementById('delete-form-' + id).submit();
             }
         }
 
-        // Submit checkbox toggle via form
+        // Checkbox auto-submit
         document.querySelectorAll('.todo-checkbox').forEach(cb => {
             cb.addEventListener('change', function () {
                 this.closest('form').submit();
             });
         });
+
+        // Completed section toggle
+        function toggleCompleted() {
+            const list = document.getElementById('completed-list');
+            const arrow = document.getElementById('completed-arrow');
+            list.classList.toggle('expanded');
+            arrow.classList.toggle('expanded');
+        }
+
+        // Add task modal
+        function openAddModal() {
+            const modal = document.getElementById('add-modal');
+            modal.classList.add('active');
+            setTimeout(() => document.getElementById('modal-title-input').focus(), 100);
+        }
+
+        function closeAddModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('add-modal').classList.remove('active');
+            }
+        }
+
+        // Header editing
+        function showHeaderEdit() {
+            document.getElementById('app-header').style.display = 'none';
+            const form = document.getElementById('header-edit-form');
+            form.classList.add('active');
+            form.querySelector('input[name="header"]').focus();
+        }
+
+        function hideHeaderEdit() {
+            document.getElementById('app-header').style.display = 'flex';
+            document.getElementById('header-edit-form').classList.remove('active');
+        }
+
+        // List management
+        function openRenameModal(listId, currentName) {
+            const modal = document.getElementById('rename-modal');
+            const form = document.getElementById('rename-form');
+            const input = document.getElementById('rename-input');
+            form.action = '/lists/rename/' + listId;
+            input.value = currentName;
+            modal.classList.add('active');
+            setTimeout(() => input.focus(), 100);
+        }
+
+        function closeRenameModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('rename-modal').classList.remove('active');
+            }
+        }
+
+        function confirmDeleteList(listId, name) {
+            if (confirm('Delete list "' + name + '" and all its tasks?')) {
+                document.getElementById('delete-list-form-' + listId).submit();
+            }
+        }
+
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
+        }
+
+        // Desktop sidebar collapse/expand
+        function toggleDesktopSidebar() {
+            document.body.classList.toggle('sidebar-collapsed');
+            localStorage.setItem('sidebarCollapsed', document.body.classList.contains('sidebar-collapsed') ? '1' : '0');
+        }
+
+        // Restore desktop sidebar state on load
+        if (localStorage.getItem('sidebarCollapsed') === '1') {
+            document.body.classList.add('sidebar-collapsed');
+        }
+
+        // Recurrence type change handler
+        function onRecurrenceChange(select, formId) {
+            const dayPicker = document.getElementById('recurrence-day-' + formId);
+            const intervalInput = document.getElementById('recurrence-interval-' + formId);
+            if (dayPicker) {
+                dayPicker.style.display = select.value === 'weekly' ? '' : 'none';
+            }
+            if (intervalInput) {
+                intervalInput.style.display = select.value === 'every_n_days' ? '' : 'none';
+            }
+        }
+
+        // Close modals on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAddModal({ target: { currentTarget: true }, currentTarget: true });
+                closeRenameModal({ target: { currentTarget: true }, currentTarget: true });
+                // Close sidebar on mobile
+                const sidebar = document.getElementById('sidebar');
+                if (sidebar.classList.contains('open')) {
+                    toggleSidebar();
+                }
+            }
+        });
+
+        // PWA service worker registration
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
     </script>
 </body>
 </html>

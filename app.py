@@ -40,10 +40,51 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             completed_at TEXT,
             sort_order INTEGER DEFAULT 0,
+            list_id INTEGER DEFAULT 1,
             FOREIGN KEY (parent_id) REFERENCES todos(id) ON DELETE CASCADE
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    # Ensure default list exists
+    existing = db.execute("SELECT id FROM lists WHERE id = 1").fetchone()
+    if not existing:
+        db.execute("INSERT INTO lists (id, name) VALUES (1, 'My Tasks')")
+    # Ensure default header setting exists
+    existing = db.execute("SELECT key FROM settings WHERE key = 'header'").fetchone()
+    if not existing:
+        db.execute("INSERT INTO settings (key, value) VALUES ('header', 'To-Do Manager')")
+    # Add list_id column if upgrading from old schema
+    try:
+        db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    # Add recurrence_day column (0=Monday..6=Sunday for weekly recurrence)
+    try:
+        db.execute("ALTER TABLE todos ADD COLUMN recurrence_day INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    # Add recurrence_interval column (custom N-day interval from completion)
+    try:
+        db.execute("ALTER TABLE todos ADD COLUMN recurrence_interval INTEGER")
+    except sqlite3.OperationalError:
+        pass
     db.commit()
 
 
@@ -63,6 +104,9 @@ def todo_to_dict(row):
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
         "sort_order": row["sort_order"],
+        "list_id": row["list_id"],
+        "recurrence_day": row["recurrence_day"],
+        "recurrence_interval": row["recurrence_interval"],
     }
 
 
@@ -79,11 +123,18 @@ def get_children(db, parent_id):
     return children
 
 
-def build_todo_tree(db):
-    """Build a tree of top-level todos with nested children."""
-    roots = db.execute(
-        "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY sort_order, created_at"
-    ).fetchall()
+def build_todo_tree(db, list_id=1):
+    """Build a tree of top-level todos with nested children, filtered by list."""
+    if list_id == 0:
+        # All lists combined view
+        roots = db.execute(
+            "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY list_id, sort_order, created_at"
+        ).fetchall()
+    else:
+        roots = db.execute(
+            "SELECT * FROM todos WHERE parent_id IS NULL AND list_id = ? ORDER BY sort_order, created_at",
+            (list_id,),
+        ).fetchall()
     tree = []
     for row in roots:
         todo = todo_to_dict(row)
@@ -129,7 +180,7 @@ def uncomplete_parent_chain(db, todo_id):
         uncomplete_parent_chain(db, parent_id)
 
 
-def compute_next_due(recurrence, current_due):
+def compute_next_due(recurrence, current_due, recurrence_day=None):
     """Compute the next due date based on recurrence type."""
     if current_due:
         base = datetime.fromisoformat(current_due)
@@ -139,12 +190,27 @@ def compute_next_due(recurrence, current_due):
     if recurrence == "daily":
         return (base + timedelta(days=1)).date().isoformat()
     elif recurrence == "weekly":
+        if recurrence_day is not None:
+            # Find next occurrence of the specified weekday
+            days_ahead = recurrence_day - base.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (base + timedelta(days=days_ahead)).date().isoformat()
         return (base + timedelta(weeks=1)).date().isoformat()
     elif recurrence == "monthly":
         return (base + relativedelta(months=1)).date().isoformat()
     elif recurrence == "yearly":
         return (base + relativedelta(years=1)).date().isoformat()
     return None
+
+
+def compute_next_due_interval(interval_days, from_date=None):
+    """Compute next due date as N days from a given date (usually completion)."""
+    if from_date:
+        base = datetime.fromisoformat(from_date)
+    else:
+        base = datetime.utcnow()
+    return (base + timedelta(days=interval_days)).date().isoformat()
 
 
 def uncomplete_recursive(db, todo_id):
@@ -163,7 +229,9 @@ def uncomplete_recursive(db, todo_id):
 def handle_recurrence(db, todo_id):
     """If a completed todo has recurrence, reset it and set next due date."""
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
-    if not todo or not todo["recurrence"]:
+    if not todo:
+        return
+    if not todo["recurrence"] and not todo["recurrence_interval"]:
         return
 
     # Find the top-level ancestor to check recurrence at the root
@@ -176,13 +244,41 @@ def handle_recurrence(db, todo_id):
         root_id = current["id"]
 
     root = db.execute("SELECT * FROM todos WHERE id = ?", (root_id,)).fetchone()
-    if root["completed"] and root["recurrence"]:
-        next_due = compute_next_due(root["recurrence"], root["due_date"])
+    if not root["completed"]:
+        return
+
+    if root["recurrence_interval"]:
+        # Interval-based: next due from completion date
+        next_due = compute_next_due_interval(
+            root["recurrence_interval"], root["completed_at"]
+        )
         db.execute(
             "UPDATE todos SET due_date = ? WHERE id = ?",
             (next_due, root_id),
         )
         uncomplete_recursive(db, root_id)
+    elif root["recurrence"]:
+        next_due = compute_next_due(
+            root["recurrence"], root["due_date"], root["recurrence_day"]
+        )
+        db.execute(
+            "UPDATE todos SET due_date = ? WHERE id = ?",
+            (next_due, root_id),
+        )
+        uncomplete_recursive(db, root_id)
+
+
+def get_setting(db, key, default=""):
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db, key, value):
+    db.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+    db.commit()
 
 
 # --- Routes ---
@@ -191,15 +287,40 @@ def handle_recurrence(db, todo_id):
 @app.route("/")
 def index():
     db = get_db()
+    list_id = request.args.get("list", 1, type=int)
     process_overdue_recurrences(db)
-    todos = build_todo_tree(db)
+    todos = build_todo_tree(db, list_id)
+    active_todos = [t for t in todos if not t["completed"]]
+    completed_todos = [t for t in todos if t["completed"]]
+    lists = db.execute("SELECT * FROM lists ORDER BY created_at").fetchall()
+    header = get_setting(db, "header", "To-Do Manager")
     today = datetime.utcnow().date().isoformat()
-    return render_template("index.html", todos=todos, now_date=today)
+    # Build a lists lookup for "All Tasks" view
+    lists_dict = {l["id"]: l["name"] for l in lists}
+    # Verify list exists (list=0 is the special "All Tasks" view)
+    if list_id == 0:
+        current_list = {"id": 0, "name": "All Tasks"}
+    else:
+        current_list = db.execute("SELECT * FROM lists WHERE id = ?", (list_id,)).fetchone()
+        if not current_list:
+            return redirect(url_for("index", list=1))
+    return render_template(
+        "index.html",
+        active_todos=active_todos,
+        completed_todos=completed_todos,
+        lists=lists,
+        lists_dict=lists_dict,
+        current_list_id=list_id,
+        current_list=current_list,
+        header=header,
+        now_date=today,
+    )
 
 
 def process_overdue_recurrences(db):
     """Auto-reset recurring todos that are past their due date."""
     today = datetime.utcnow().date().isoformat()
+    # Standard recurrence (daily/weekly/monthly/yearly)
     overdue = db.execute(
         """
         SELECT * FROM todos
@@ -212,10 +333,37 @@ def process_overdue_recurrences(db):
         (today,),
     ).fetchall()
     for todo in overdue:
-        next_due = compute_next_due(todo["recurrence"], todo["due_date"])
-        # Keep advancing until due date is today or future
+        next_due = compute_next_due(
+            todo["recurrence"], todo["due_date"], todo["recurrence_day"]
+        )
         while next_due and next_due < today:
-            next_due = compute_next_due(todo["recurrence"], next_due)
+            next_due = compute_next_due(
+                todo["recurrence"], next_due, todo["recurrence_day"]
+            )
+        db.execute(
+            "UPDATE todos SET due_date = ? WHERE id = ?", (next_due, todo["id"])
+        )
+        uncomplete_recursive(db, todo["id"])
+    # Interval-based recurrence (every N days)
+    overdue_interval = db.execute(
+        """
+        SELECT * FROM todos
+        WHERE recurrence_interval IS NOT NULL
+          AND parent_id IS NULL
+          AND due_date IS NOT NULL
+          AND due_date < ?
+          AND completed = 1
+        """,
+        (today,),
+    ).fetchall()
+    for todo in overdue_interval:
+        next_due = compute_next_due_interval(
+            todo["recurrence_interval"], todo["due_date"]
+        )
+        while next_due and next_due < today:
+            next_due = compute_next_due_interval(
+                todo["recurrence_interval"], next_due
+            )
         db.execute(
             "UPDATE todos SET due_date = ? WHERE id = ?", (next_due, todo["id"])
         )
@@ -227,29 +375,51 @@ def process_overdue_recurrences(db):
 def add_todo():
     title = request.form.get("title", "").strip()
     if not title:
-        return redirect(url_for("index"))
+        list_id = request.form.get("list_id", 1, type=int)
+        return redirect(url_for("index", list=list_id))
 
     description = request.form.get("description", "").strip()
     parent_id = request.form.get("parent_id") or None
     recurrence = request.form.get("recurrence") or None
     due_date = request.form.get("due_date") or None
+    list_id = request.form.get("list_id", 1, type=int)
+    recurrence_day = request.form.get("recurrence_day") or None
+    recurrence_interval = request.form.get("recurrence_interval") or None
 
     if parent_id:
         parent_id = int(parent_id)
-        # Sub-todos don't have their own recurrence
         recurrence = None
         due_date = None
+        recurrence_day = None
+        recurrence_interval = None
+
+    # Handle "every N days" mode: store interval, clear recurrence
+    if recurrence == "every_n_days":
+        recurrence = None
+        if recurrence_interval:
+            recurrence_interval = int(recurrence_interval)
+        else:
+            recurrence_interval = None
+        recurrence_day = None
+    else:
+        recurrence_interval = None
+        if recurrence == "weekly" and recurrence_day is not None:
+            recurrence_day = int(recurrence_day)
+        else:
+            recurrence_day = None
 
     db = get_db()
     db.execute(
         """
-        INSERT INTO todos (title, description, parent_id, recurrence, due_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id,
+                           recurrence_day, recurrence_interval)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (title, description, parent_id, recurrence, due_date),
+        (title, description, parent_id, recurrence, due_date, list_id,
+         recurrence_day, recurrence_interval),
     )
     db.commit()
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 @app.route("/toggle/<int:todo_id>", methods=["POST"])
@@ -259,6 +429,7 @@ def toggle_todo(todo_id):
     if not todo:
         return redirect(url_for("index"))
 
+    list_id = todo["list_id"]
     new_status = 0 if todo["completed"] else 1
 
     if new_status == 1:
@@ -279,7 +450,7 @@ def toggle_todo(todo_id):
         uncomplete_parent_chain(db, todo_id)
         db.commit()
 
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 def complete_recursive(db, todo_id, timestamp):
@@ -305,31 +476,52 @@ def edit_todo(todo_id):
     description = request.form.get("description", "").strip()
     recurrence = request.form.get("recurrence") or None
     due_date = request.form.get("due_date") or None
+    recurrence_day = request.form.get("recurrence_day") or None
+    recurrence_interval = request.form.get("recurrence_interval") or None
 
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo:
         return redirect(url_for("index"))
 
-    # Sub-todos don't have their own recurrence
+    list_id = todo["list_id"]
+
     if todo["parent_id"]:
         recurrence = None
         due_date = None
+        recurrence_day = None
+        recurrence_interval = None
+    elif recurrence == "every_n_days":
+        recurrence = None
+        if recurrence_interval:
+            recurrence_interval = int(recurrence_interval)
+        else:
+            recurrence_interval = None
+        recurrence_day = None
+    else:
+        recurrence_interval = None
+        if recurrence == "weekly" and recurrence_day is not None:
+            recurrence_day = int(recurrence_day)
+        else:
+            recurrence_day = None
 
     db.execute(
         """
-        UPDATE todos SET title = ?, description = ?, recurrence = ?, due_date = ?
+        UPDATE todos SET title = ?, description = ?, recurrence = ?, due_date = ?,
+                         recurrence_day = ?, recurrence_interval = ?
         WHERE id = ?
         """,
-        (title, description, recurrence, due_date, todo_id),
+        (title, description, recurrence, due_date, recurrence_day,
+         recurrence_interval, todo_id),
     )
     db.commit()
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 @app.route("/delete/<int:todo_id>", methods=["POST"])
 def delete_todo(todo_id):
     db = get_db()
-    todo = db.execute("SELECT parent_id FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    todo = db.execute("SELECT parent_id, list_id FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    list_id = todo["list_id"] if todo else 1
     db.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
     db.commit()
 
@@ -347,7 +539,137 @@ def delete_todo(todo_id):
             propagate_completion(db, todo["parent_id"])
             db.commit()
 
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
+
+
+# --- List management routes ---
+
+
+@app.route("/lists/add", methods=["POST"])
+def add_list():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("index"))
+    db = get_db()
+    cursor = db.execute("INSERT INTO lists (name) VALUES (?)", (name,))
+    db.commit()
+    return redirect(url_for("index", list=cursor.lastrowid))
+
+
+@app.route("/lists/rename/<int:list_id>", methods=["POST"])
+def rename_list(list_id):
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("index", list=list_id))
+    db = get_db()
+    db.execute("UPDATE lists SET name = ? WHERE id = ?", (name, list_id))
+    db.commit()
+    return redirect(url_for("index", list=list_id))
+
+
+@app.route("/lists/delete/<int:list_id>", methods=["POST"])
+def delete_list(list_id):
+    if list_id == 1:
+        return redirect(url_for("index", list=1))
+    db = get_db()
+    db.execute("DELETE FROM todos WHERE list_id = ?", (list_id,))
+    db.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+    db.commit()
+    return redirect(url_for("index", list=1))
+
+
+# --- Settings routes ---
+
+
+@app.route("/settings/header", methods=["POST"])
+def update_header():
+    header = request.form.get("header", "").strip()
+    list_id = request.form.get("list_id", 1, type=int)
+    if header:
+        db = get_db()
+        set_setting(db, "header", header)
+    return redirect(url_for("index", list=list_id))
+
+
+# --- PWA routes ---
+
+
+@app.route("/manifest.json")
+def pwa_manifest():
+    manifest = {
+        "name": "To-Do Manager",
+        "short_name": "ToDo",
+        "description": "A self-hosted to-do manager",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0f1117",
+        "theme_color": "#6366f1",
+        "icons": [
+            {
+                "src": "/icon/192",
+                "sizes": "192x192",
+                "type": "image/svg+xml",
+                "purpose": "any maskable",
+            },
+            {
+                "src": "/icon/512",
+                "sizes": "512x512",
+                "type": "image/svg+xml",
+                "purpose": "any maskable",
+            },
+        ],
+    }
+    return jsonify(manifest)
+
+
+@app.route("/icon/<int:size>")
+def pwa_icon(size):
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">
+  <rect width="{size}" height="{size}" rx="{size // 6}" fill="#6366f1"/>
+  <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle"
+        font-family="sans-serif" font-weight="bold" font-size="{size * 0.45}" fill="white">&#10003;</text>
+</svg>"""
+    return app.response_class(response=svg, status=200, mimetype="image/svg+xml")
+
+
+@app.route("/sw.js")
+def service_worker():
+    sw_js = """
+const CACHE_NAME = 'todo-v1';
+const URLS_TO_CACHE = ['/'];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(URLS_TO_CACHE))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(
+    fetch(event.request)
+      .then(response => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
+  );
+});
+"""
+    return app.response_class(
+        response=sw_js, status=200, mimetype="application/javascript"
+    )
 
 
 if __name__ == "__main__":
