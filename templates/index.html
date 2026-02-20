@@ -1222,6 +1222,18 @@
         </div>
     </div>
 
+    <!-- Incomplete Sub-tasks Confirmation Modal -->
+    <div class="modal-overlay" id="subtask-close-modal" onclick="closeSubtaskModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>Incomplete Sub-tasks</h2>
+            <p style="margin:0.75rem 0 1.25rem;color:var(--text-secondary,#9ca3af);">This task has incomplete sub-tasks. Would you like to close all sub-tasks as well?</p>
+            <div style="display:flex;justify-content:flex-end;gap:0.75rem;">
+                <button type="button" class="btn btn-ghost" onclick="closeSubtaskModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="confirmSubtaskClose()">Close all sub-tasks</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Subtodo form toggle
         function toggleSubtodoForm(id) {
@@ -1252,12 +1264,52 @@
             }
         }
 
-        // Checkbox auto-submit
+        // Checkbox auto-submit with incomplete subtask guard
+        let _pendingToggleForm = null;
+        let _pendingCheckbox = null;
+
         document.querySelectorAll('.todo-checkbox').forEach(cb => {
             cb.addEventListener('change', function () {
-                this.closest('form').submit();
+                const form = this.closest('form');
+                const todoItem = this.closest('li.todo-item');
+
+                if (this.checked && todoItem) {
+                    const childrenList = todoItem.querySelector(':scope > ul.todo-children');
+                    if (childrenList) {
+                        const incomplete = childrenList.querySelectorAll('.todo-checkbox:not(:checked)');
+                        if (incomplete.length > 0) {
+                            // Block and show confirmation
+                            this.checked = false;
+                            _pendingToggleForm = form;
+                            _pendingCheckbox = this;
+                            document.getElementById('subtask-close-modal').classList.add('active');
+                            return;
+                        }
+                    }
+                }
+
+                form.submit();
             });
         });
+
+        function confirmSubtaskClose() {
+            if (_pendingToggleForm) {
+                _pendingToggleForm.submit();
+            }
+            _closePendingSubtaskModal();
+        }
+
+        function closeSubtaskModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                _closePendingSubtaskModal();
+            }
+        }
+
+        function _closePendingSubtaskModal() {
+            document.getElementById('subtask-close-modal').classList.remove('active');
+            _pendingToggleForm = null;
+            _pendingCheckbox = null;
+        }
 
         // Completed section toggle
         function toggleCompleted() {
@@ -1352,6 +1404,7 @@
             if (e.key === 'Escape') {
                 closeAddModal({ target: { currentTarget: true }, currentTarget: true });
                 closeRenameModal({ target: { currentTarget: true }, currentTarget: true });
+                _closePendingSubtaskModal();
                 // Close sidebar on mobile
                 const sidebar = document.getElementById('sidebar');
                 if (sidebar.classList.contains('open')) {
