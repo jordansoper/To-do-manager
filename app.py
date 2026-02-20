@@ -669,5 +669,112 @@ self.addEventListener('fetch', event => {
     )
 
 
+# --- REST API Routes (for Home Assistant integration) ---
+
+
+@app.route("/api/lists", methods=["GET"])
+def api_get_lists():
+    """Return all lists as JSON."""
+    db = get_db()
+    lists = db.execute("SELECT * FROM lists ORDER BY created_at").fetchall()
+    return jsonify([dict(l) for l in lists])
+
+
+@app.route("/api/lists/<int:list_id>/todos", methods=["GET"])
+def api_get_todos(list_id):
+    """Return top-level todos (with nested children) for a list."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM todos WHERE list_id = ? AND parent_id IS NULL ORDER BY sort_order, created_at",
+        (list_id,),
+    ).fetchall()
+    result = []
+    for row in rows:
+        t = todo_to_dict(row)
+        t["children"] = get_children(db, t["id"])
+        result.append(t)
+    return jsonify(result)
+
+
+@app.route("/api/todos", methods=["POST"])
+def api_add_todo():
+    """Create a new top-level todo. Expects JSON body with 'title' (required),
+    'description', 'list_id', and 'due_date' (all optional)."""
+    data = request.get_json(silent=True) or {}
+    title = data.get("title", "").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    description = data.get("description", "")
+    list_id = data.get("list_id", 1)
+    due_date = data.get("due_date") or None
+
+    db = get_db()
+    cursor = db.execute(
+        "INSERT INTO todos (title, description, list_id, due_date) VALUES (?, ?, ?, ?)",
+        (title, description, list_id, due_date),
+    )
+    db.commit()
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return jsonify(todo_to_dict(todo)), 201
+
+
+@app.route("/api/todos/<int:todo_id>/toggle", methods=["POST"])
+def api_toggle_todo(todo_id):
+    """Toggle the completion status of a todo."""
+    db = get_db()
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if not todo:
+        return jsonify({"error": "not found"}), 404
+
+    new_status = 0 if todo["completed"] else 1
+    if new_status == 1:
+        now = datetime.utcnow().isoformat()
+        complete_recursive(db, todo_id, now)
+        propagate_completion(db, todo_id)
+        db.commit()
+        handle_recurrence(db, todo_id)
+        db.commit()
+    else:
+        db.execute(
+            "UPDATE todos SET completed = 0, completed_at = NULL WHERE id = ?",
+            (todo_id,),
+        )
+        uncomplete_parent_chain(db, todo_id)
+        db.commit()
+
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return jsonify(todo_to_dict(todo))
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
+def api_delete_todo(todo_id):
+    """Delete a todo by ID."""
+    db = get_db()
+    todo = db.execute(
+        "SELECT parent_id, list_id FROM todos WHERE id = ?", (todo_id,)
+    ).fetchone()
+    if not todo:
+        return jsonify({"error": "not found"}), 404
+
+    db.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    db.commit()
+
+    if todo["parent_id"]:
+        remaining = db.execute(
+            "SELECT id FROM todos WHERE parent_id = ?", (todo["parent_id"],)
+        ).fetchall()
+        if remaining and all_children_completed(db, todo["parent_id"]):
+            now = datetime.utcnow().isoformat()
+            db.execute(
+                "UPDATE todos SET completed = 1, completed_at = ? WHERE id = ?",
+                (now, todo["parent_id"]),
+            )
+            propagate_completion(db, todo["parent_id"])
+            db.commit()
+
+    return jsonify({"success": True})
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

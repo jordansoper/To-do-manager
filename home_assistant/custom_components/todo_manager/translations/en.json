@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to To-Do Manager",
+        "description": "Enter the URL of your To-Do Manager instance (e.g. {example_url}).",
+        "data": {
+          "url": "URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect. Check the URL and ensure To-Do Manager is running."
+    },
+    "abort": {
+      "already_configured": "This To-Do Manager instance is already configured."
+    }
+  }
+}

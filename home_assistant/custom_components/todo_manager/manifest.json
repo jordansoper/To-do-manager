@@ -1,0 +1,12 @@
+{
+  "domain": "todo_manager",
+  "name": "To-Do Manager",
+  "version": "1.0.0",
+  "documentation": "https://github.com/jordansoper/To-do-manager",
+  "issue_tracker": "https://github.com/jordansoper/To-do-manager/issues",
+  "dependencies": [],
+  "requirements": [],
+  "codeowners": [],
+  "iot_class": "local_polling",
+  "config_flow": true
+}
