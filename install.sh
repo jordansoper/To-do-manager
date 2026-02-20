@@ -9,6 +9,8 @@ set -euo pipefail
 APP_DIR="/opt/todo-manager"
 APP_USER="todo"
 SERVICE_NAME="todo-manager"
+REPO_URL="https://github.com/jordansoper/To-do-manager.git"
+BRANCH="${1:-main}"
 
 echo "==> Installing system dependencies..."
 apt-get update -qq
@@ -20,10 +22,15 @@ if ! id "$APP_USER" &>/dev/null; then
 fi
 
 echo "==> Setting up application directory..."
-mkdir -p "$APP_DIR"
-cp app.py requirements.txt "$APP_DIR/"
-cp -r templates "$APP_DIR/" 2>/dev/null || true
-cp -r static "$APP_DIR/" 2>/dev/null || true
+if [ -d "$APP_DIR/.git" ]; then
+    echo "==> Git repo already exists, pulling latest from branch: $BRANCH..."
+    git -C "$APP_DIR" fetch origin
+    git -C "$APP_DIR" checkout "$BRANCH"
+    git -C "$APP_DIR" pull origin "$BRANCH"
+else
+    echo "==> Cloning repository (branch: $BRANCH)..."
+    git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+fi
 
 echo "==> Creating Python virtual environment..."
 python3 -m venv "$APP_DIR/venv"
