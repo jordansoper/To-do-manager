@@ -255,7 +255,6 @@ def handle_recurrence(db, todo_id):
             "UPDATE todos SET due_date = ? WHERE id = ?",
             (next_due, root_id),
         )
-        uncomplete_recursive(db, root_id)
     elif root["recurrence"]:
         next_due = compute_next_due(
             root["recurrence"], root["due_date"], root["recurrence_day"]
@@ -264,7 +263,6 @@ def handle_recurrence(db, todo_id):
             "UPDATE todos SET due_date = ? WHERE id = ?",
             (next_due, root_id),
         )
-        uncomplete_recursive(db, root_id)
 
 
 def get_setting(db, key, default=""):
@@ -326,7 +324,7 @@ def process_overdue_recurrences(db):
         WHERE recurrence IS NOT NULL
           AND parent_id IS NULL
           AND due_date IS NOT NULL
-          AND due_date < ?
+          AND due_date <= ?
           AND completed = 1
         """,
         (today,),
@@ -335,7 +333,7 @@ def process_overdue_recurrences(db):
         next_due = compute_next_due(
             todo["recurrence"], todo["due_date"], todo["recurrence_day"]
         )
-        while next_due and next_due < today:
+        while next_due and next_due <= today:
             next_due = compute_next_due(
                 todo["recurrence"], next_due, todo["recurrence_day"]
             )
@@ -350,7 +348,7 @@ def process_overdue_recurrences(db):
         WHERE recurrence_interval IS NOT NULL
           AND parent_id IS NULL
           AND due_date IS NOT NULL
-          AND due_date < ?
+          AND due_date <= ?
           AND completed = 1
         """,
         (today,),
@@ -359,7 +357,7 @@ def process_overdue_recurrences(db):
         next_due = compute_next_due_interval(
             todo["recurrence_interval"], todo["due_date"]
         )
-        while next_due and next_due < today:
+        while next_due and next_due <= today:
             next_due = compute_next_due_interval(
                 todo["recurrence_interval"], next_due
             )
