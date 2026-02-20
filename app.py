@@ -40,10 +40,41 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now')),
             completed_at TEXT,
             sort_order INTEGER DEFAULT 0,
+            list_id INTEGER DEFAULT 1,
             FOREIGN KEY (parent_id) REFERENCES todos(id) ON DELETE CASCADE
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    # Ensure default list exists
+    existing = db.execute("SELECT id FROM lists WHERE id = 1").fetchone()
+    if not existing:
+        db.execute("INSERT INTO lists (id, name) VALUES (1, 'My Tasks')")
+    # Ensure default header setting exists
+    existing = db.execute("SELECT key FROM settings WHERE key = 'header'").fetchone()
+    if not existing:
+        db.execute("INSERT INTO settings (key, value) VALUES ('header', 'To-Do Manager')")
+    # Add list_id column if upgrading from old schema
+    try:
+        db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     db.commit()
 
 
@@ -63,6 +94,7 @@ def todo_to_dict(row):
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
         "sort_order": row["sort_order"],
+        "list_id": row["list_id"],
     }
 
 
@@ -79,10 +111,11 @@ def get_children(db, parent_id):
     return children
 
 
-def build_todo_tree(db):
-    """Build a tree of top-level todos with nested children."""
+def build_todo_tree(db, list_id=1):
+    """Build a tree of top-level todos with nested children, filtered by list."""
     roots = db.execute(
-        "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY sort_order, created_at"
+        "SELECT * FROM todos WHERE parent_id IS NULL AND list_id = ? ORDER BY sort_order, created_at",
+        (list_id,),
     ).fetchall()
     tree = []
     for row in roots:
@@ -185,16 +218,47 @@ def handle_recurrence(db, todo_id):
         uncomplete_recursive(db, root_id)
 
 
+def get_setting(db, key, default=""):
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db, key, value):
+    db.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+    db.commit()
+
+
 # --- Routes ---
 
 
 @app.route("/")
 def index():
     db = get_db()
+    list_id = request.args.get("list", 1, type=int)
     process_overdue_recurrences(db)
-    todos = build_todo_tree(db)
+    todos = build_todo_tree(db, list_id)
+    active_todos = [t for t in todos if not t["completed"]]
+    completed_todos = [t for t in todos if t["completed"]]
+    lists = db.execute("SELECT * FROM lists ORDER BY created_at").fetchall()
+    header = get_setting(db, "header", "To-Do Manager")
     today = datetime.utcnow().date().isoformat()
-    return render_template("index.html", todos=todos, now_date=today)
+    # Verify list exists
+    current_list = db.execute("SELECT * FROM lists WHERE id = ?", (list_id,)).fetchone()
+    if not current_list:
+        return redirect(url_for("index", list=1))
+    return render_template(
+        "index.html",
+        active_todos=active_todos,
+        completed_todos=completed_todos,
+        lists=lists,
+        current_list_id=list_id,
+        current_list=current_list,
+        header=header,
+        now_date=today,
+    )
 
 
 def process_overdue_recurrences(db):
@@ -227,12 +291,14 @@ def process_overdue_recurrences(db):
 def add_todo():
     title = request.form.get("title", "").strip()
     if not title:
-        return redirect(url_for("index"))
+        list_id = request.form.get("list_id", 1, type=int)
+        return redirect(url_for("index", list=list_id))
 
     description = request.form.get("description", "").strip()
     parent_id = request.form.get("parent_id") or None
     recurrence = request.form.get("recurrence") or None
     due_date = request.form.get("due_date") or None
+    list_id = request.form.get("list_id", 1, type=int)
 
     if parent_id:
         parent_id = int(parent_id)
@@ -243,13 +309,13 @@ def add_todo():
     db = get_db()
     db.execute(
         """
-        INSERT INTO todos (title, description, parent_id, recurrence, due_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (title, description, parent_id, recurrence, due_date),
+        (title, description, parent_id, recurrence, due_date, list_id),
     )
     db.commit()
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 @app.route("/toggle/<int:todo_id>", methods=["POST"])
@@ -259,6 +325,7 @@ def toggle_todo(todo_id):
     if not todo:
         return redirect(url_for("index"))
 
+    list_id = todo["list_id"]
     new_status = 0 if todo["completed"] else 1
 
     if new_status == 1:
@@ -279,7 +346,7 @@ def toggle_todo(todo_id):
         uncomplete_parent_chain(db, todo_id)
         db.commit()
 
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 def complete_recursive(db, todo_id, timestamp):
@@ -310,6 +377,8 @@ def edit_todo(todo_id):
     if not todo:
         return redirect(url_for("index"))
 
+    list_id = todo["list_id"]
+
     # Sub-todos don't have their own recurrence
     if todo["parent_id"]:
         recurrence = None
@@ -323,13 +392,14 @@ def edit_todo(todo_id):
         (title, description, recurrence, due_date, todo_id),
     )
     db.commit()
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
 
 
 @app.route("/delete/<int:todo_id>", methods=["POST"])
 def delete_todo(todo_id):
     db = get_db()
-    todo = db.execute("SELECT parent_id FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    todo = db.execute("SELECT parent_id, list_id FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    list_id = todo["list_id"] if todo else 1
     db.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
     db.commit()
 
@@ -347,7 +417,56 @@ def delete_todo(todo_id):
             propagate_completion(db, todo["parent_id"])
             db.commit()
 
-    return redirect(url_for("index"))
+    return redirect(url_for("index", list=list_id))
+
+
+# --- List management routes ---
+
+
+@app.route("/lists/add", methods=["POST"])
+def add_list():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("index"))
+    db = get_db()
+    cursor = db.execute("INSERT INTO lists (name) VALUES (?)", (name,))
+    db.commit()
+    return redirect(url_for("index", list=cursor.lastrowid))
+
+
+@app.route("/lists/rename/<int:list_id>", methods=["POST"])
+def rename_list(list_id):
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("index", list=list_id))
+    db = get_db()
+    db.execute("UPDATE lists SET name = ? WHERE id = ?", (name, list_id))
+    db.commit()
+    return redirect(url_for("index", list=list_id))
+
+
+@app.route("/lists/delete/<int:list_id>", methods=["POST"])
+def delete_list(list_id):
+    if list_id == 1:
+        return redirect(url_for("index", list=1))
+    db = get_db()
+    db.execute("DELETE FROM todos WHERE list_id = ?", (list_id,))
+    db.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+    db.commit()
+    return redirect(url_for("index", list=1))
+
+
+# --- Settings routes ---
+
+
+@app.route("/settings/header", methods=["POST"])
+def update_header():
+    header = request.form.get("header", "").strip()
+    list_id = request.form.get("list_id", 1, type=int)
+    if header:
+        db = get_db()
+        set_setting(db, "header", header)
+    return redirect(url_for("index", list=list_id))
 
 
 if __name__ == "__main__":

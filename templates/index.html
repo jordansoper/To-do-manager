@@ -1,5 +1,5 @@
-{# Recursive macro for rendering todos - must be defined before use #}
-{% macro render_todo(todo) %}
+{# Recursive macro for rendering todos #}
+{% macro render_todo(todo, depth=0) %}
 <li class="todo-item {{ 'completed' if todo.completed }}">
     <div class="todo-main" id="todo-main-{{ todo.id }}">
         <form method="POST" action="/toggle/{{ todo.id }}" style="display:flex;align-items:center;">
@@ -21,7 +21,11 @@
         </div>
         <div class="todo-actions">
             <button class="btn btn-ghost" onclick="toggleEditForm({{ todo.id }})" title="Edit">Edit</button>
-            <button class="btn btn-ghost" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% if depth == 0 %}
+                <button class="btn btn-ghost" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% else %}
+                <button class="btn btn-ghost subtask-nested-btn" onclick="toggleSubtodoForm({{ todo.id }})" title="Add sub-task">+ Sub</button>
+            {% endif %}
             <button class="btn btn-danger" onclick="confirmDelete({{ todo.id }})" title="Delete">Del</button>
             <form id="delete-form-{{ todo.id }}" method="POST" action="/delete/{{ todo.id }}" style="display:none;"></form>
         </div>
@@ -66,17 +70,17 @@
 
     <ul class="todo-children">
         {% for child in todo.children %}
-            {{ render_todo(child) }}
+            {{ render_todo(child, depth + 1) }}
         {% endfor %}
     </ul>
     {% endif %}
 
-    <!-- Add sub-todo -->
-    <div class="add-subtodo">
-        <button class="add-subtodo-btn" onclick="toggleSubtodoForm({{ todo.id }})">+ Add sub-task</button>
+    <!-- Add sub-todo (inline, right-aligned) -->
+    <div class="add-subtodo" id="subtodo-area-{{ todo.id }}">
         <div class="add-subtodo-form" id="subtodo-form-{{ todo.id }}">
             <form method="POST" action="/add" style="display:flex;gap:0.5rem;flex:1;">
                 <input type="hidden" name="parent_id" value="{{ todo.id }}">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
                 <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off" style="flex:1;">
                 <button type="submit" class="btn btn-primary">Add</button>
             </form>
@@ -90,7 +94,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>To-Do Manager</title>
+    <title>{{ header }}</title>
     <style>
         :root {
             --bg: #0f1117;
@@ -106,6 +110,7 @@
             --danger-hover: #f87171;
             --warning: #f59e0b;
             --radius: 8px;
+            --sidebar-width: 240px;
         }
 
         * {
@@ -119,22 +124,229 @@
             background: var(--bg);
             color: var(--text);
             min-height: 100vh;
-            padding: 2rem 1rem;
+            display: flex;
         }
 
-        .container {
-            max-width: 720px;
-            margin: 0 auto;
+        /* ===== Sidebar ===== */
+        .sidebar {
+            width: var(--sidebar-width);
+            min-width: var(--sidebar-width);
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            position: sticky;
+            top: 0;
         }
 
-        h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 1.5rem;
+        .sidebar-header {
+            padding: 0 1rem 1rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 0.75rem;
+        }
+
+        .sidebar-header h2 {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .sidebar-lists {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 0.5rem;
+        }
+
+        .sidebar-list-item {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            border-radius: var(--radius);
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-decoration: none;
+            transition: background 0.15s, color 0.15s;
+            gap: 0.5rem;
+            position: relative;
+        }
+
+        .sidebar-list-item:hover {
+            background: var(--surface-hover);
             color: var(--text);
         }
 
-        /* Add Todo Form */
+        .sidebar-list-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-hover);
+        }
+
+        .sidebar-list-icon {
+            font-size: 1rem;
+            width: 20px;
+            text-align: center;
+        }
+
+        .sidebar-list-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sidebar-list-actions {
+            display: none;
+            gap: 0.25rem;
+        }
+
+        .sidebar-list-item:hover .sidebar-list-actions {
+            display: flex;
+        }
+
+        .sidebar-list-action-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 0.15rem 0.25rem;
+            border-radius: 3px;
+            line-height: 1;
+        }
+
+        .sidebar-list-action-btn:hover {
+            color: var(--text);
+            background: var(--border);
+        }
+
+        .sidebar-list-action-btn.delete-btn:hover {
+            color: var(--danger);
+        }
+
+        .sidebar-add-list {
+            padding: 0.75rem 0.5rem 0;
+            border-top: 1px solid var(--border);
+            margin-top: 0.5rem;
+        }
+
+        .sidebar-add-list form {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .sidebar-add-list input {
+            flex: 1;
+            min-width: 0;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 0.35rem 0.5rem;
+            font-size: 0.8rem;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .sidebar-add-list input:focus {
+            border-color: var(--accent);
+        }
+
+        .sidebar-add-list button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--radius);
+            padding: 0.35rem 0.6rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .sidebar-add-list button:hover {
+            background: var(--accent-hover);
+        }
+
+        /* ===== Main Content ===== */
+        .main-content {
+            flex: 1;
+            padding: 2rem 1.5rem;
+            max-width: 800px;
+            min-width: 0;
+        }
+
+        /* ===== Configurable Header ===== */
+        .app-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .app-header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .app-header h1:hover {
+            color: var(--accent-hover);
+        }
+
+        .header-edit-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.4rem;
+            border-radius: 3px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .app-header:hover .header-edit-btn {
+            opacity: 1;
+        }
+
+        .header-edit-btn:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        .header-edit-form {
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .header-edit-form.active {
+            display: flex;
+        }
+
+        .header-edit-form input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            font-size: 1.25rem;
+            font-weight: 700;
+            font-family: inherit;
+            outline: none;
+            flex: 1;
+        }
+
+        .header-edit-form input:focus {
+            border-color: var(--accent);
+        }
+
+        /* ===== Add Todo Form / Modal ===== */
         .add-form {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -144,6 +356,71 @@
         }
 
         .add-form h2 {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .add-task-trigger {
+            display: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .add-task-trigger.visible {
+            display: block;
+        }
+
+        .add-task-trigger-btn {
+            background: var(--surface);
+            border: 1px dashed var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            padding: 0.75rem 1rem;
+            width: 100%;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-family: inherit;
+            text-align: left;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .add-task-trigger-btn:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+
+        /* Modal overlay */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: 90%;
+            max-width: 520px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content h2 {
             font-size: 0.75rem;
             font-weight: 600;
             margin-bottom: 1rem;
@@ -247,7 +524,7 @@
             background: var(--surface-hover);
         }
 
-        /* Todo List */
+        /* ===== Todo List ===== */
         .todo-list {
             list-style: none;
         }
@@ -368,6 +645,15 @@
             opacity: 1;
         }
 
+        /* Hide nested sub-task button unless hovered */
+        .subtask-nested-btn {
+            display: none !important;
+        }
+
+        .todo-main:hover .subtask-nested-btn {
+            display: inline-flex !important;
+        }
+
         .todo-progress {
             padding: 0 1rem 0.5rem 2.75rem;
         }
@@ -418,31 +704,16 @@
 
         /* Add sub-todo inline */
         .add-subtodo {
-            padding: 0.5rem 1rem 0.75rem 2.75rem;
+            padding: 0 1rem 0.5rem 2.75rem;
         }
 
         .add-subtodo-form {
             display: none;
             gap: 0.5rem;
-            margin-top: 0.5rem;
         }
 
         .add-subtodo-form.active {
             display: flex;
-        }
-
-        .add-subtodo-btn {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 0.25rem 0;
-            font-family: inherit;
-        }
-
-        .add-subtodo-btn:hover {
-            color: var(--accent);
         }
 
         /* Edit form inline */
@@ -461,6 +732,67 @@
             margin-bottom: 0;
         }
 
+        /* ===== Completed Section ===== */
+        .completed-section {
+            margin-top: 2rem;
+            border-top: 1px solid var(--border);
+            padding-top: 1rem;
+        }
+
+        .completed-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.8125rem;
+            font-family: inherit;
+            padding: 0.5rem 0;
+            width: 100%;
+            text-align: left;
+        }
+
+        .completed-toggle:hover {
+            color: var(--text);
+        }
+
+        .completed-toggle-arrow {
+            display: inline-block;
+            transition: transform 0.2s;
+            font-size: 0.7rem;
+        }
+
+        .completed-toggle-arrow.expanded {
+            transform: rotate(90deg);
+        }
+
+        .completed-count {
+            background: var(--border);
+            padding: 0.1rem 0.5rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+        }
+
+        .completed-list {
+            display: none;
+            list-style: none;
+            margin-top: 0.5rem;
+        }
+
+        .completed-list.expanded {
+            display: block;
+        }
+
+        .completed-list .todo-item {
+            opacity: 0.7;
+        }
+
+        .completed-list .todo-item:hover {
+            opacity: 1;
+        }
+
         /* Empty state */
         .empty-state {
             text-align: center;
@@ -472,9 +804,51 @@
             font-size: 0.9375rem;
         }
 
-        /* Responsive */
+        /* ===== List rename modal ===== */
+        .rename-modal .modal-content {
+            max-width: 360px;
+        }
+
+        .rename-modal form {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .rename-modal input {
+            flex: 1;
+        }
+
+        /* ===== Responsive ===== */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 60px;
+                min-width: 60px;
+                padding: 1rem 0;
+            }
+
+            .sidebar-header,
+            .sidebar-add-list,
+            .sidebar-list-name,
+            .sidebar-list-actions {
+                display: none !important;
+            }
+
+            .sidebar-list-item {
+                justify-content: center;
+                padding: 0.5rem;
+            }
+
+            .sidebar-list-icon {
+                font-size: 1.2rem;
+            }
+
+            .main-content {
+                padding: 1.5rem 1rem;
+            }
+        }
+
         @media (max-width: 480px) {
-            body {
+            .main-content {
                 padding: 1rem 0.5rem;
             }
 
@@ -490,17 +864,71 @@
             .todo-actions {
                 opacity: 1;
             }
+
+            .subtask-nested-btn {
+                display: inline-flex !important;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>To-Do Manager</h1>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>Lists</h2>
+        </div>
+        <div class="sidebar-lists">
+            {% for list in lists %}
+            <a href="/?list={{ list.id }}"
+               class="sidebar-list-item {{ 'active' if list.id == current_list_id }}">
+                <span class="sidebar-list-icon">&#9776;</span>
+                <span class="sidebar-list-name">{{ list.name }}</span>
+                {% if list.id != 1 %}
+                <span class="sidebar-list-actions">
+                    <button type="button" class="sidebar-list-action-btn"
+                            onclick="event.preventDefault();event.stopPropagation();openRenameModal({{ list.id }}, '{{ list.name | e }}')"
+                            title="Rename">&#9998;</button>
+                    <button type="button" class="sidebar-list-action-btn delete-btn"
+                            onclick="event.preventDefault();event.stopPropagation();confirmDeleteList({{ list.id }}, '{{ list.name | e }}')"
+                            title="Delete">&#10005;</button>
+                    <form id="delete-list-form-{{ list.id }}" method="POST" action="/lists/delete/{{ list.id }}" style="display:none;"></form>
+                </span>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+        <div class="sidebar-add-list">
+            <form method="POST" action="/lists/add">
+                <input type="text" name="name" placeholder="New list..." required autocomplete="off">
+                <button type="submit">+</button>
+            </form>
+        </div>
+    </nav>
 
-        <!-- Add Todo Form -->
-        <div class="add-form">
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Configurable Header -->
+        <div class="app-header" id="app-header">
+            <h1 onclick="showHeaderEdit()">{{ header }}</h1>
+            <button class="header-edit-btn" onclick="showHeaderEdit()" title="Edit header">&#9998;</button>
+        </div>
+        <div class="header-edit-form" id="header-edit-form">
+            <form method="POST" action="/settings/header" style="display:flex;gap:0.5rem;flex:1;">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                <input type="text" name="header" value="{{ header }}" required>
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-ghost" onclick="hideHeaderEdit()">Cancel</button>
+            </form>
+        </div>
+
+        <!-- Add Task: inline for empty, popup trigger when items exist -->
+        {% set has_items = active_todos | length > 0 or completed_todos | length > 0 %}
+
+        {% if not has_items %}
+        <div class="add-form" id="add-form-inline">
             <h2>New Task</h2>
             <form method="POST" action="/add">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
                 <div class="form-row">
                     <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
                     <button type="submit" class="btn btn-primary">Add</button>
@@ -520,22 +948,85 @@
                 </div>
             </form>
         </div>
+        {% endif %}
 
-        <!-- Todo List -->
-        {% if todos %}
+        {% if has_items %}
+        <div class="add-task-trigger visible" id="add-task-trigger">
+            <button class="add-task-trigger-btn" onclick="openAddModal()">+ Add new task...</button>
+        </div>
+        {% endif %}
+
+        <!-- Todo List (active only) -->
+        {% if active_todos %}
         <ul class="todo-list">
-            {% for todo in todos %}
-                {{ render_todo(todo) }}
+            {% for todo in active_todos %}
+                {{ render_todo(todo, 0) }}
             {% endfor %}
         </ul>
-        {% else %}
+        {% elif not has_items %}
         <div class="empty-state">
             <p>No tasks yet. Add one above to get started.</p>
         </div>
         {% endif %}
+
+        <!-- Completed Section (collapsed) -->
+        {% if completed_todos %}
+        <div class="completed-section">
+            <button class="completed-toggle" onclick="toggleCompleted()">
+                <span class="completed-toggle-arrow" id="completed-arrow">&#9654;</span>
+                Completed
+                <span class="completed-count">{{ completed_todos | length }}</span>
+            </button>
+            <ul class="completed-list todo-list" id="completed-list">
+                {% for todo in completed_todos %}
+                    {{ render_todo(todo, 0) }}
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay" id="add-modal" onclick="closeAddModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>New Task</h2>
+            <form method="POST" action="/add">
+                <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                <div class="form-row">
+                    <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off" id="modal-title-input">
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </div>
+                <div class="form-row">
+                    <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
+                </div>
+                <div class="form-row">
+                    <select name="recurrence">
+                        <option value="">No repeat</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                    <input type="date" name="due_date" title="Due date">
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Rename List Modal -->
+    <div class="modal-overlay rename-modal" id="rename-modal" onclick="closeRenameModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>Rename List</h2>
+            <form method="POST" id="rename-form" action="">
+                <input type="text" name="name" id="rename-input" required autocomplete="off">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-ghost" onclick="closeRenameModal()">Cancel</button>
+            </form>
+        </div>
     </div>
 
     <script>
+        // Subtodo form toggle
         function toggleSubtodoForm(id) {
             const form = document.getElementById('subtodo-form-' + id);
             form.classList.toggle('active');
@@ -544,6 +1035,7 @@
             }
         }
 
+        // Edit form toggle
         function toggleEditForm(id) {
             const form = document.getElementById('edit-form-' + id);
             const main = document.getElementById('todo-main-' + id);
@@ -556,17 +1048,83 @@
             }
         }
 
+        // Delete confirmation
         function confirmDelete(id) {
             if (confirm('Delete this task and all sub-tasks?')) {
                 document.getElementById('delete-form-' + id).submit();
             }
         }
 
-        // Submit checkbox toggle via form
+        // Checkbox auto-submit
         document.querySelectorAll('.todo-checkbox').forEach(cb => {
             cb.addEventListener('change', function () {
                 this.closest('form').submit();
             });
+        });
+
+        // Completed section toggle
+        function toggleCompleted() {
+            const list = document.getElementById('completed-list');
+            const arrow = document.getElementById('completed-arrow');
+            list.classList.toggle('expanded');
+            arrow.classList.toggle('expanded');
+        }
+
+        // Add task modal
+        function openAddModal() {
+            const modal = document.getElementById('add-modal');
+            modal.classList.add('active');
+            setTimeout(() => document.getElementById('modal-title-input').focus(), 100);
+        }
+
+        function closeAddModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('add-modal').classList.remove('active');
+            }
+        }
+
+        // Header editing
+        function showHeaderEdit() {
+            document.getElementById('app-header').style.display = 'none';
+            const form = document.getElementById('header-edit-form');
+            form.classList.add('active');
+            form.querySelector('input[name="header"]').focus();
+        }
+
+        function hideHeaderEdit() {
+            document.getElementById('app-header').style.display = 'flex';
+            document.getElementById('header-edit-form').classList.remove('active');
+        }
+
+        // List management
+        function openRenameModal(listId, currentName) {
+            const modal = document.getElementById('rename-modal');
+            const form = document.getElementById('rename-form');
+            const input = document.getElementById('rename-input');
+            form.action = '/lists/rename/' + listId;
+            input.value = currentName;
+            modal.classList.add('active');
+            setTimeout(() => input.focus(), 100);
+        }
+
+        function closeRenameModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('rename-modal').classList.remove('active');
+            }
+        }
+
+        function confirmDeleteList(listId, name) {
+            if (confirm('Delete list "' + name + '" and all its tasks?')) {
+                document.getElementById('delete-list-form-' + listId).submit();
+            }
+        }
+
+        // Close modals on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeAddModal({ target: { currentTarget: true }, currentTarget: true });
+                closeRenameModal({ target: { currentTarget: true }, currentTarget: true });
+            }
         });
     </script>
 </body>
