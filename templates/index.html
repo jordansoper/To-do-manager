@@ -12,10 +12,15 @@
             {% endif %}
             <div class="todo-meta">
                 {% if todo.recurrence %}
-                    <span class="badge badge-recurrence">{{ todo.recurrence }}</span>
+                    <span class="badge badge-recurrence">{{ todo.recurrence }}{% if todo.recurrence == 'weekly' and todo.recurrence_day is not none %} {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][todo.recurrence_day] }}{% endif %}</span>
+                {% elif todo.recurrence_interval %}
+                    <span class="badge badge-recurrence">Every {{ todo.recurrence_interval }} days</span>
                 {% endif %}
                 {% if todo.due_date %}
                     <span class="badge badge-due {{ 'overdue' if todo.due_date < now_date }}">Due {{ todo.due_date }}</span>
+                {% endif %}
+                {% if current_list_id == 0 and todo.list_id %}
+                    <span class="badge badge-list">{{ lists_dict.get(todo.list_id, 'Unknown') }}</span>
                 {% endif %}
             </div>
         </div>
@@ -44,13 +49,20 @@
             </div>
             {% if not todo.parent_id %}
             <div class="form-row">
-                <select name="recurrence">
+                <select name="recurrence" onchange="onRecurrenceChange(this, 'edit-{{ todo.id }}')">
                     <option value="">No repeat</option>
                     <option value="daily" {{ 'selected' if todo.recurrence == 'daily' }}>Daily</option>
                     <option value="weekly" {{ 'selected' if todo.recurrence == 'weekly' }}>Weekly</option>
                     <option value="monthly" {{ 'selected' if todo.recurrence == 'monthly' }}>Monthly</option>
                     <option value="yearly" {{ 'selected' if todo.recurrence == 'yearly' }}>Yearly</option>
+                    <option value="every_n_days" {{ 'selected' if todo.recurrence_interval }}>Every N days</option>
                 </select>
+                <select name="recurrence_day" class="recurrence-day" id="recurrence-day-edit-{{ todo.id }}" style="{{ 'display:none' if todo.recurrence != 'weekly' }}">
+                    {% for i, day in [(0,'Monday'),(1,'Tuesday'),(2,'Wednesday'),(3,'Thursday'),(4,'Friday'),(5,'Saturday'),(6,'Sunday')] %}
+                    <option value="{{ i }}" {{ 'selected' if todo.recurrence_day == i }}>{{ day }}</option>
+                    {% endfor %}
+                </select>
+                <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-edit-{{ todo.id }}" min="1" placeholder="Days" value="{{ todo.recurrence_interval or '' }}" style="{{ 'display:none' if not todo.recurrence_interval }}">
                 <input type="date" name="due_date" value="{{ todo.due_date or '' }}">
             </div>
             {% endif %}
@@ -94,6 +106,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon/192" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/icon/192">
     <title>{{ header }}</title>
     <style>
         :root {
@@ -145,14 +163,18 @@
             padding: 0 1rem 1rem;
             border-bottom: 1px solid var(--border);
             margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        .sidebar-header h2 {
+        .sidebar-title {
             font-size: 0.7rem;
             font-weight: 600;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            margin: 0;
         }
 
         .sidebar-lists {
@@ -284,6 +306,29 @@
             align-items: center;
             gap: 0.75rem;
             margin-bottom: 1.5rem;
+        }
+
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            cursor: pointer;
+            padding: 0.35rem 0.6rem;
+            line-height: 1;
+        }
+
+        .mobile-menu-btn:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        @media (max-width: 768px) {
+            .mobile-menu-btn {
+                display: block;
+            }
         }
 
         .app-header h1 {
@@ -818,32 +863,89 @@
             flex: 1;
         }
 
+        /* ===== Sidebar toggle & overlay ===== */
+        .sidebar-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            cursor: pointer;
+            padding: 0.25rem 0.4rem;
+            border-radius: var(--radius);
+        }
+
+        .sidebar-toggle:hover {
+            color: var(--text);
+            background: var(--surface-hover);
+        }
+
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 49;
+        }
+
+        .sidebar-overlay.active {
+            display: block;
+        }
+
+        /* List badge (shown in All Tasks view) */
+        .badge-list {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--accent-hover);
+        }
+
+        /* Recurrence day & interval inputs */
+        .recurrence-day, .recurrence-interval {
+            min-width: 100px;
+        }
+
+        .recurrence-interval {
+            width: 80px;
+            min-width: 60px;
+        }
+
         /* ===== Responsive ===== */
         @media (max-width: 768px) {
             .sidebar {
-                width: 60px;
-                min-width: 60px;
+                position: fixed;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                width: var(--sidebar-width);
+                min-width: var(--sidebar-width);
+                transform: translateX(-100%);
+                transition: transform 0.25s ease;
+                z-index: 50;
                 padding: 1rem 0;
             }
 
-            .sidebar-header,
-            .sidebar-add-list,
-            .sidebar-list-name,
-            .sidebar-list-actions {
-                display: none !important;
+            .sidebar.open {
+                transform: translateX(0);
             }
 
-            .sidebar-list-item {
-                justify-content: center;
-                padding: 0.5rem;
+            .sidebar-toggle {
+                display: block;
             }
 
-            .sidebar-list-icon {
-                font-size: 1.2rem;
+            .sidebar-title {
+                display: block;
             }
 
             .main-content {
                 padding: 1.5rem 1rem;
+                margin-left: 0;
+            }
+
+            /* Show a fixed hamburger when sidebar is closed */
+            .mobile-menu-btn {
+                display: block;
             }
         }
 
@@ -872,12 +974,21 @@
     </style>
 </head>
 <body>
+    <!-- Mobile sidebar overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
     <!-- Sidebar -->
-    <nav class="sidebar">
+    <nav class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h2>Lists</h2>
+            <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#9776;</button>
+            <h2 class="sidebar-title">Lists</h2>
         </div>
         <div class="sidebar-lists">
+            <a href="/?list=0"
+               class="sidebar-list-item {{ 'active' if current_list_id == 0 }}">
+                <span class="sidebar-list-icon">&#9733;</span>
+                <span class="sidebar-list-name">All Tasks</span>
+            </a>
             {% for list in lists %}
             <a href="/?list={{ list.id }}"
                class="sidebar-list-item {{ 'active' if list.id == current_list_id }}">
@@ -909,6 +1020,7 @@
     <div class="main-content">
         <!-- Configurable Header -->
         <div class="app-header" id="app-header">
+            <button class="mobile-menu-btn" onclick="toggleSidebar()" title="Open menu">&#9776;</button>
             <h1 onclick="showHeaderEdit()">{{ header }}</h1>
             <button class="header-edit-btn" onclick="showHeaderEdit()" title="Edit header">&#9998;</button>
         </div>
@@ -928,7 +1040,7 @@
         <div class="add-form" id="add-form-inline">
             <h2>New Task</h2>
             <form method="POST" action="/add">
-                <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                <input type="hidden" name="list_id" value="{{ current_list_id if current_list_id != 0 else 1 }}">
                 <div class="form-row">
                     <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
                     <button type="submit" class="btn btn-primary">Add</button>
@@ -937,15 +1049,35 @@
                     <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
                 </div>
                 <div class="form-row">
-                    <select name="recurrence">
+                    <select name="recurrence" onchange="onRecurrenceChange(this, 'inline')">
                         <option value="">No repeat</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>
                         <option value="yearly">Yearly</option>
+                        <option value="every_n_days">Every N days</option>
                     </select>
+                    <select name="recurrence_day" class="recurrence-day" id="recurrence-day-inline" style="display:none">
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                    <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-inline" min="1" placeholder="Days" style="display:none">
                     <input type="date" name="due_date" title="Due date">
                 </div>
+                {% if current_list_id == 0 %}
+                <div class="form-row">
+                    <select name="list_id">
+                        {% for list in lists %}
+                        <option value="{{ list.id }}">{{ list.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
             </form>
         </div>
         {% endif %}
@@ -991,7 +1123,7 @@
         <div class="modal-content" onclick="event.stopPropagation()">
             <h2>New Task</h2>
             <form method="POST" action="/add">
-                <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                <input type="hidden" name="list_id" value="{{ current_list_id if current_list_id != 0 else 1 }}">
                 <div class="form-row">
                     <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off" id="modal-title-input">
                     <button type="submit" class="btn btn-primary">Add</button>
@@ -1000,15 +1132,35 @@
                     <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
                 </div>
                 <div class="form-row">
-                    <select name="recurrence">
+                    <select name="recurrence" onchange="onRecurrenceChange(this, 'modal')">
                         <option value="">No repeat</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>
                         <option value="yearly">Yearly</option>
+                        <option value="every_n_days">Every N days</option>
                     </select>
+                    <select name="recurrence_day" class="recurrence-day" id="recurrence-day-modal" style="display:none">
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                    <input type="number" name="recurrence_interval" class="recurrence-interval" id="recurrence-interval-modal" min="1" placeholder="Days" style="display:none">
                     <input type="date" name="due_date" title="Due date">
                 </div>
+                {% if current_list_id == 0 %}
+                <div class="form-row">
+                    <select name="list_id">
+                        {% for list in lists %}
+                        <option value="{{ list.id }}">{{ list.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
             </form>
         </div>
     </div>
@@ -1119,13 +1271,43 @@
             }
         }
 
+        // Mobile sidebar toggle
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
+        }
+
+        // Recurrence type change handler
+        function onRecurrenceChange(select, formId) {
+            const dayPicker = document.getElementById('recurrence-day-' + formId);
+            const intervalInput = document.getElementById('recurrence-interval-' + formId);
+            if (dayPicker) {
+                dayPicker.style.display = select.value === 'weekly' ? '' : 'none';
+            }
+            if (intervalInput) {
+                intervalInput.style.display = select.value === 'every_n_days' ? '' : 'none';
+            }
+        }
+
         // Close modals on Escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeAddModal({ target: { currentTarget: true }, currentTarget: true });
                 closeRenameModal({ target: { currentTarget: true }, currentTarget: true });
+                // Close sidebar on mobile
+                const sidebar = document.getElementById('sidebar');
+                if (sidebar.classList.contains('open')) {
+                    toggleSidebar();
+                }
             }
         });
+
+        // PWA service worker registration
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
     </script>
 </body>
 </html>
