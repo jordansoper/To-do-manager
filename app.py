@@ -747,6 +747,38 @@ def api_toggle_todo(todo_id):
     return jsonify(todo_to_dict(todo))
 
 
+@app.route("/api/todos/<int:todo_id>", methods=["PUT"])
+def api_edit_todo(todo_id):
+    """Update a todo. Accepts JSON body with optional 'title', 'description',
+    'due_date', 'recurrence', 'recurrence_day', 'recurrence_interval'."""
+    db = get_db()
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if not todo:
+        return jsonify({"error": "not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    title = data.get("title", todo["title"]).strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    description = data.get("description", todo["description"])
+    due_date = data.get("due_date", todo["due_date"]) or None
+    recurrence = data.get("recurrence", todo["recurrence"])
+    recurrence_day = data.get("recurrence_day", todo["recurrence_day"])
+    recurrence_interval = data.get("recurrence_interval", todo["recurrence_interval"])
+
+    db.execute(
+        """UPDATE todos SET title = ?, description = ?, due_date = ?,
+           recurrence = ?, recurrence_day = ?, recurrence_interval = ?
+           WHERE id = ?""",
+        (title, description, due_date, recurrence, recurrence_day,
+         recurrence_interval, todo_id),
+    )
+    db.commit()
+    updated = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return jsonify(todo_to_dict(updated))
+
+
 @app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
 def api_delete_todo(todo_id):
     """Delete a todo by ID."""
@@ -774,6 +806,69 @@ def api_delete_todo(todo_id):
             db.commit()
 
     return jsonify({"success": True})
+
+
+@app.route("/api/lists", methods=["POST"])
+def api_create_list():
+    """Create a new list. Expects JSON body with 'name'."""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    db = get_db()
+    cursor = db.execute("INSERT INTO lists (name) VALUES (?)", (name,))
+    db.commit()
+    new_list = db.execute("SELECT * FROM lists WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return jsonify(dict(new_list)), 201
+
+
+@app.route("/api/lists/<int:list_id>", methods=["DELETE"])
+def api_delete_list(list_id):
+    """Delete a list and all its todos."""
+    db = get_db()
+    existing = db.execute("SELECT * FROM lists WHERE id = ?", (list_id,)).fetchone()
+    if not existing:
+        return jsonify({"error": "not found"}), 404
+
+    db.execute("DELETE FROM todos WHERE list_id = ?", (list_id,))
+    db.execute("DELETE FROM lists WHERE id = ?", (list_id,))
+    db.commit()
+    return jsonify({"success": True})
+
+
+@app.route("/api/todos/<int:todo_id>/subtask", methods=["POST"])
+def api_add_subtask(todo_id):
+    """Create a subtask under a parent todo. Expects JSON with 'title'."""
+    db = get_db()
+    parent = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if not parent:
+        return jsonify({"error": "parent not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    title = data.get("title", "").strip()
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    description = data.get("description", "")
+    due_date = data.get("due_date") or None
+
+    cursor = db.execute(
+        "INSERT INTO todos (title, description, list_id, parent_id, due_date) VALUES (?, ?, ?, ?, ?)",
+        (title, description, parent["list_id"], todo_id, due_date),
+    )
+    db.commit()
+
+    if parent["completed"]:
+        db.execute(
+            "UPDATE todos SET completed = 0, completed_at = NULL WHERE id = ?",
+            (todo_id,),
+        )
+        uncomplete_parent_chain(db, todo_id)
+        db.commit()
+
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return jsonify(todo_to_dict(todo)), 201
 
 
 if __name__ == "__main__":
