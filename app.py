@@ -97,12 +97,19 @@ def init_db():
 
 
 def migrate_lists_schema(db):
-    """Add lists + todos.list_id for existing databases."""
+    """Add lists + todos columns for existing databases (CREATE TABLE IF NOT EXISTS skips old tables)."""
+    lists_cols = [r["name"] for r in db.execute("PRAGMA table_info(lists)").fetchall()]
+    if lists_cols and "sort_order" not in lists_cols:
+        db.execute("ALTER TABLE lists ADD COLUMN sort_order INTEGER DEFAULT 0")
+
     if db.execute("SELECT COUNT(*) FROM lists").fetchone()[0] == 0:
         db.execute("INSERT INTO lists (id, name, sort_order) VALUES (1, 'General', 0)")
+
     cols = [r["name"] for r in db.execute("PRAGMA table_info(todos)").fetchall()]
     if "list_id" not in cols:
         db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")
+    if "sort_order" not in cols:
+        db.execute("ALTER TABLE todos ADD COLUMN sort_order INTEGER DEFAULT 0")
 
 
 with app.app_context():
@@ -135,8 +142,11 @@ def todo_to_dict(row):
         "due_date": row["due_date"],
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
-        "sort_order": row["sort_order"],
     }
+    try:
+        d["sort_order"] = row["sort_order"]
+    except (KeyError, IndexError):
+        d["sort_order"] = 0
     try:
         d["list_id"] = row["list_id"]
     except (KeyError, IndexError):
