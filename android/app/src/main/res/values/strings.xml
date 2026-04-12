@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">To-Doer</string>
+    <string name="main_title">To-Do Manager</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_subtitle">Server connection</string>
+    <string name="nav_drawer_open">Open settings</string>
+    <string name="nav_drawer_close">Close settings</string>
+    <string name="empty_no_url">Open the menu and enter your server URL to connect.</string>
+    <string name="empty_no_tasks">No tasks yet. Add one in the web app.</string>
     <string name="base_url_hint">Server URL (https://…)</string>
     <string name="api_key_hint">API key (if server uses TODO_API_KEY)</string>
     <string name="save">Save &amp; sync</string>

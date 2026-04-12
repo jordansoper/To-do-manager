@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Match web UI (templates/index.html) -->
+    <color name="bg">#0F1117</color>
+    <color name="surface">#1A1D27</color>
+    <color name="surface_hover">#222632</color>
+    <color name="border">#2A2E3B</color>
+    <color name="text_primary">#E4E4E7</color>
+    <color name="text_muted">#71717A</color>
+    <color name="accent">#6366F1</color>
+    <color name="accent_hover">#818CF8</color>
+    <color name="success">#22C55E</color>
+    <color name="warning">#F59E0B</color>
+    <color name="danger">#EF4444</color>
+
     <color name="ic_launcher_bg">#6366F1</color>
 </resources>

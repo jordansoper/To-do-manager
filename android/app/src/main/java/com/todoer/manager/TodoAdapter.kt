@@ -2,6 +2,7 @@ package com.todoer.manager
 
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.core.view.updatePaddingRelative
 import androidx.recyclerview.widget.RecyclerView
 import com.todoer.manager.data.FlatRow
@@ -31,15 +32,20 @@ class TodoAdapter(
 
     inner class VH(private val binding: ItemTodoBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(row: FlatRow) {
-            val depthPx = (binding.root.resources.displayMetrics.density * 16 * row.depth).toInt()
-            binding.root.updatePaddingRelative(start = depthPx)
+            val d = binding.root.resources.displayMetrics.density
+            val baseStart = (8 * d).toInt()
+            val indent = (16 * d * row.depth).toInt()
+            binding.rowInner.updatePaddingRelative(start = baseStart + indent)
 
             binding.check.isChecked = row.completed
             binding.title.text = row.title
+            val ctx = binding.root.context
             if (row.completed) {
                 binding.title.paintFlags = binding.title.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                binding.title.setTextColor(ContextCompat.getColor(ctx, R.color.text_muted))
             } else {
                 binding.title.paintFlags = binding.title.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+                binding.title.setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
             }
 
             val parts = mutableListOf<String>()
