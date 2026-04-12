@@ -45,7 +45,8 @@ Type=exec
 User=${APP_USER}
 Group=${APP_USER}
 WorkingDirectory=${APP_DIR}
-ExecStart=${APP_DIR}/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 app:app
+# Single worker: SQLite does not tolerate multiple writer processes well ("database is locked").
+ExecStart=${APP_DIR}/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 app:app
 Restart=on-failure
 RestartSec=5
 

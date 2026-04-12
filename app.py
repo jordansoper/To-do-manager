@@ -1,14 +1,26 @@
 import calendar
-import sqlite3
+import logging
 import os
+import sqlite3
+import sys
 from functools import wraps
 from datetime import date, datetime, timedelta
+
 from flask import Flask, render_template, request, redirect, url_for, jsonify, g
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
 app.config["DATABASE"] = os.path.join(app.instance_path, "todos.db")
 
 os.makedirs(app.instance_path, exist_ok=True)
+
+if not app.logger.handlers:
+    _h = logging.StreamHandler(sys.stderr)
+    _h.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+    app.logger.addHandler(_h)
+app.logger.setLevel(logging.INFO)
 
 
 def get_db():
@@ -16,6 +28,10 @@ def get_db():
         g.db = sqlite3.connect(app.config["DATABASE"])
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        # WAL + busy timeout: SQLite is poor with concurrent writers; gunicorn multi-worker
+        # + default journal mode often yields "database is locked" (500) on small hosts.
+        g.db.execute("PRAGMA journal_mode=WAL")
+        g.db.execute("PRAGMA busy_timeout=8000")
     return g.db
 
 
@@ -69,6 +85,14 @@ def migrate_lists_schema(db):
 
 with app.app_context():
     init_db()
+
+
+@app.errorhandler(Exception)
+def _log_unhandled_exception(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    app.logger.exception("%s %s", request.method, request.path)
+    return "Internal Server Error", 500
 
 
 def todo_to_dict(row):
@@ -307,7 +331,13 @@ def require_api_auth(f):
 
 @app.route("/api/v1/health", methods=["GET"])
 def api_health():
-    return jsonify(ok=True)
+    try:
+        db = get_db()
+        db.execute("SELECT 1").fetchone()
+        return jsonify(ok=True, database="ok")
+    except (OSError, sqlite3.Error) as e:
+        app.logger.exception("health check failed")
+        return jsonify(ok=False, database="error", detail=str(e)), 500
 
 
 @app.route("/api/v1/todos", methods=["GET"])
