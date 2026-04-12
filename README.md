@@ -114,6 +114,27 @@ Copy this file to back up all your to-dos.
 
 ---
 
+## Android app
+
+A companion **Android** project lives in [`android/`](android/). It connects to your hosted instance, shows tasks on your phone, and can send **notifications** for tasks due today and for **recurring** tasks that have been reset for a new cycle.
+
+See [`android/README.md`](android/README.md) for build steps and API details.
+
+### JSON API (for the app or other clients)
+
+- `GET /api/v1/health` — public liveness check (`{"ok":true}`).
+- `GET /api/v1/todos` — full task tree as JSON (same data the web UI uses after recurrence processing).
+- `POST /api/v1/todos/<id>/toggle` — toggle completion for that task.
+
+If you set the environment variable **`TODO_API_KEY`**, clients must send `Authorization: Bearer <TODO_API_KEY>` (or header `X-API-Key`). If unset, the API is unauthenticated (only suitable on a trusted network).
+
+Example for a systemd service:
+
+```ini
+[Service]
+Environment="TODO_API_KEY=your-long-random-secret"
+```
+
 ## Development
 
 To run locally for development:

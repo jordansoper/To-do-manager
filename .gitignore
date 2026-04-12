@@ -4,3 +4,11 @@ instance/
 *.db
 .env
 venv/
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/*.iml
+android/.idea/
+android/captures/

@@ -1,0 +1,33 @@
+package com.todoer.manager.data
+
+import android.content.Context
+
+class Prefs(context: Context) {
+    private val p = context.getSharedPreferences("todoer", Context.MODE_PRIVATE)
+
+    var baseUrl: String?
+        get() = p.getString("base_url", null)
+        set(value) { p.edit().putString("base_url", value).apply() }
+
+    var apiKey: String?
+        get() = p.getString("api_key", null)
+        set(value) { p.edit().putString("api_key", value).apply() }
+
+    fun lastRootSnapshotJson(): String? = p.getString("root_snapshot_json", null)
+
+    fun setLastRootSnapshotJson(json: String?) {
+        p.edit().putString("root_snapshot_json", json).apply()
+    }
+
+    fun dueNotifiedDate(): String? = p.getString("due_notif_date", null)
+
+    fun dueNotifiedIds(): Set<String> =
+        p.getStringSet("due_notif_ids", emptySet()) ?: emptySet()
+
+    fun markDueNotified(todayIso: String, ids: Set<String>) {
+        p.edit()
+            .putString("due_notif_date", todayIso)
+            .putStringSet("due_notif_ids", ids)
+            .apply()
+    }
+}

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from functools import wraps
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from flask import Flask, render_template, request, redirect, url_for, jsonify, g
@@ -185,6 +186,76 @@ def handle_recurrence(db, todo_id):
         uncomplete_recursive(db, root_id)
 
 
+# --- API (mobile app) ---
+
+
+def require_api_auth(f):
+    """If TODO_API_KEY is set, require Bearer token or X-API-Key header."""
+
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        expected = os.environ.get("TODO_API_KEY")
+        if not expected:
+            return f(*args, **kwargs)
+        token = None
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:].strip()
+        if not token:
+            token = (request.headers.get("X-API-Key") or "").strip()
+        if token != expected:
+            return jsonify(error="unauthorized"), 401
+        return f(*args, **kwargs)
+
+    return wrapped
+
+
+@app.route("/api/v1/health", methods=["GET"])
+def api_health():
+    return jsonify(ok=True)
+
+
+@app.route("/api/v1/todos", methods=["GET"])
+@require_api_auth
+def api_list_todos():
+    db = get_db()
+    process_overdue_recurrences(db)
+    todos = build_todo_tree(db)
+    return jsonify(
+        server_time=datetime.utcnow().isoformat() + "Z",
+        todos=todos,
+    )
+
+
+@app.route("/api/v1/todos/<int:todo_id>/toggle", methods=["POST"])
+@require_api_auth
+def api_toggle_todo(todo_id):
+    db = get_db()
+    todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if not todo:
+        return jsonify(error="not_found"), 404
+
+    new_status = 0 if todo["completed"] else 1
+
+    if new_status == 1:
+        now = datetime.utcnow().isoformat()
+        complete_recursive(db, todo_id, now)
+        propagate_completion(db, todo_id)
+        db.commit()
+        handle_recurrence(db, todo_id)
+        db.commit()
+    else:
+        db.execute(
+            "UPDATE todos SET completed = 0, completed_at = NULL WHERE id = ?",
+            (todo_id,),
+        )
+        uncomplete_parent_chain(db, todo_id)
+        db.commit()
+
+    row = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return jsonify(ok=True, todo=todo_to_dict(row))
+
+
 # --- Routes ---
 
 
@@ -241,7 +312,7 @@ def add_todo():
         due_date = None
 
     db = get_db()
-    db.execute(
+    cur = db.execute(
         """
         INSERT INTO todos (title, description, parent_id, recurrence, due_date)
         VALUES (?, ?, ?, ?, ?)
@@ -249,6 +320,12 @@ def add_todo():
         (title, description, parent_id, recurrence, due_date),
     )
     db.commit()
+    new_id = cur.lastrowid
+    if (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        and parent_id
+    ):
+        return jsonify(ok=True, id=new_id)
     return redirect(url_for("index"))
 
 
