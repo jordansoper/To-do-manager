@@ -131,6 +131,22 @@ def _log_request_exception(sender, exception, **extra):
         pass
 
 
+def _normalize_recurrence(val):
+    if val is None:
+        return None
+    v = str(val).strip().lower()
+    if v in ("daily", "weekly", "monthly", "yearly"):
+        return v
+    return None
+
+
+def _normalize_due_date(val):
+    if val is None:
+        return None
+    v = str(val).strip()
+    return v if v else None
+
+
 def todo_to_dict(row):
     d = {
         "id": row["id"],
@@ -320,28 +336,17 @@ def uncomplete_recursive(db, todo_id):
 
 
 def handle_recurrence(db, todo_id):
-    """If a completed todo has recurrence, reset it and set next due date."""
+    """If a completed recurring todo was toggled complete, advance due date and reset for next cycle."""
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
-    if not todo or not todo["recurrence"]:
+    if not todo or not todo["recurrence"] or not todo["completed"]:
         return
 
-    # Find the top-level ancestor to check recurrence at the root
-    root_id = todo_id
-    current = todo
-    while current["parent_id"]:
-        current = db.execute(
-            "SELECT * FROM todos WHERE id = ?", (current["parent_id"],)
-        ).fetchone()
-        root_id = current["id"]
-
-    root = db.execute("SELECT * FROM todos WHERE id = ?", (root_id,)).fetchone()
-    if root["completed"] and root["recurrence"]:
-        next_due = compute_next_due(root["recurrence"], root["due_date"])
-        db.execute(
-            "UPDATE todos SET due_date = ? WHERE id = ?",
-            (next_due, root_id),
-        )
-        uncomplete_recursive(db, root_id)
+    next_due = compute_next_due(todo["recurrence"], todo["due_date"])
+    db.execute(
+        "UPDATE todos SET due_date = ? WHERE id = ?",
+        (next_due, todo_id),
+    )
+    uncomplete_recursive(db, todo_id)
 
 
 # --- API (mobile app) ---
@@ -517,14 +522,12 @@ def api_post_todo():
         return jsonify(error="title required"), 400
     description = (data.get("description") or "").strip()
     parent_id = data.get("parent_id")
-    recurrence = data.get("recurrence") or None
-    due_date = data.get("due_date") or None
+    recurrence = _normalize_recurrence(data.get("recurrence"))
+    due_date = _normalize_due_date(data.get("due_date"))
 
     db = get_db()
     if parent_id is not None:
         parent_id = int(parent_id)
-        recurrence = None
-        due_date = None
         prow = db.execute("SELECT list_id FROM todos WHERE id = ?", (parent_id,)).fetchone()
         list_id = int(prow["list_id"]) if prow and prow["list_id"] is not None else 1
     else:
@@ -632,7 +635,6 @@ def process_overdue_recurrences(db):
             """
             SELECT * FROM todos
             WHERE recurrence IS NOT NULL
-              AND parent_id IS NULL
               AND due_date IS NOT NULL
               AND due_date < ?
               AND completed = 1
@@ -678,14 +680,12 @@ def add_todo():
 
     description = request.form.get("description", "").strip()
     parent_id = request.form.get("parent_id") or None
-    recurrence = request.form.get("recurrence") or None
-    due_date = request.form.get("due_date") or None
+    recurrence = _normalize_recurrence(request.form.get("recurrence"))
+    due_date = _normalize_due_date(request.form.get("due_date"))
 
     db = get_db()
     if parent_id:
         parent_id = int(parent_id)
-        recurrence = None
-        due_date = None
         prow = db.execute("SELECT list_id FROM todos WHERE id = ?", (parent_id,)).fetchone()
         list_id = int(prow["list_id"]) if prow and prow["list_id"] is not None else 1
     else:
@@ -765,17 +765,12 @@ def edit_todo(todo_id):
         return redirect_to_index()
 
     description = request.form.get("description", "").strip()
-    recurrence = request.form.get("recurrence") or None
-    due_date = request.form.get("due_date") or None
+    recurrence = _normalize_recurrence(request.form.get("recurrence"))
+    due_date = _normalize_due_date(request.form.get("due_date"))
 
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo:
         return redirect_to_index()
-
-    # Sub-todos don't have their own recurrence
-    if todo["parent_id"]:
-        recurrence = None
-        due_date = None
 
     db.execute(
         """

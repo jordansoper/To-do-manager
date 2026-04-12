@@ -215,7 +215,7 @@ class MainActivity : AppCompatActivity() {
         val res = lastResponse ?: return
         val rows = buildDisplayRows(res, collapsedIds)
         adapter.submit(rows)
-        val hasTasks = rows.any { it is DisplayRow.Task }
+        val hasTasks = rows.any { it is DisplayRow.TaskGroup }
         binding.emptyState.isVisible = !hasTasks
         if (!hasTasks) {
             binding.emptyState.setText(R.string.empty_no_tasks)
@@ -359,6 +359,19 @@ class MainActivity : AppCompatActivity() {
         val base = prefs.baseUrl?.trim().orEmpty()
         if (base.isEmpty()) return
         val d = DialogSubtaskBinding.inflate(layoutInflater)
+        val recOptions = listOf("", "daily", "weekly", "monthly", "yearly")
+        val recLabels = listOf(
+            getString(R.string.recurrence_none),
+            getString(R.string.recurrence_daily),
+            getString(R.string.recurrence_weekly),
+            getString(R.string.recurrence_monthly),
+            getString(R.string.recurrence_yearly)
+        )
+        d.spinnerRecurrence.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            recLabels
+        )
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.add_subtask)
             .setView(d.root)
@@ -368,7 +381,17 @@ class MainActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     try {
                         val api = TodoApiFactory.create(base, prefs.apiKey?.trim())
-                        api.addTodo(AddTodoBody(title = title, parentId = parentId))
+                        val recIdx = d.spinnerRecurrence.selectedItemPosition
+                        val recurrence = recOptions.getOrNull(recIdx)?.takeIf { it.isNotEmpty() }
+                        val due = d.inputDue.text?.toString()?.trim().orEmpty().takeIf { it.isNotEmpty() }
+                        api.addTodo(
+                            AddTodoBody(
+                                title = title,
+                                parentId = parentId,
+                                recurrence = recurrence,
+                                dueDate = due
+                            )
+                        )
                         refresh()
                     } catch (e: Exception) {
                         Toast.makeText(this@MainActivity, e.message ?: "Failed", Toast.LENGTH_LONG).show()

@@ -18,8 +18,10 @@
         <div class="todo-content">
             {% if todo.children %}
             <button type="button" class="todo-title todo-title-collapsible" data-todo-id="{{ todo.id }}" aria-expanded="true" title="Hide sub-tasks">
-                <span class="todo-collapse-caret" aria-hidden="true">▾</span>
-                <span class="todo-title-text">{{ todo.title }}</span>
+                <span class="todo-title-row">
+                    <span class="todo-collapse-caret" aria-hidden="true">▾</span>
+                    <span class="todo-title-text">{{ todo.title }}</span>
+                </span>
                 <span class="todo-subtask-summary">{{ sub_done }}/{{ sub_total }} sub-tasks completed</span>
             </button>
             {% else %}
@@ -59,18 +61,16 @@
             <div class="form-row">
                 <input type="text" name="description" value="{{ todo.description or '' }}" placeholder="Description">
             </div>
-            {% if not todo.parent_id %}
             <div class="form-row">
-                <select name="recurrence">
+                <select name="recurrence" aria-label="Repeat">
                     <option value="">No repeat</option>
                     <option value="daily" {{ 'selected' if todo.recurrence == 'daily' }}>Daily</option>
                     <option value="weekly" {{ 'selected' if todo.recurrence == 'weekly' }}>Weekly</option>
                     <option value="monthly" {{ 'selected' if todo.recurrence == 'monthly' }}>Monthly</option>
                     <option value="yearly" {{ 'selected' if todo.recurrence == 'yearly' }}>Yearly</option>
                 </select>
-                <input type="date" name="due_date" value="{{ todo.due_date or '' }}">
+                <input type="date" name="due_date" value="{{ todo.due_date or '' }}" aria-label="Due date">
             </div>
-            {% endif %}
         </form>
     </div>
 
@@ -94,11 +94,23 @@
         <div class="add-subtodo">
             <button class="add-subtodo-btn" onclick="toggleSubtodoForm({{ todo.id }})">+ Add sub-task</button>
             <div class="add-subtodo-form" id="subtodo-form-{{ todo.id }}">
-                <form class="subtodo-add-form" method="POST" action="/add" style="display:flex;gap:0.5rem;flex:1;">
+                <form class="subtodo-add-form" method="POST" action="/add">
                     <input type="hidden" name="list" value="{{ current_list }}">
                     <input type="hidden" name="parent_id" value="{{ todo.id }}">
-                    <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off" style="flex:1;">
-                    <button type="submit" class="btn btn-primary">Add</button>
+                    <div class="form-row subtodo-add-row">
+                        <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off">
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </div>
+                    <div class="form-row subtodo-add-meta">
+                        <select name="recurrence" aria-label="Repeat">
+                            <option value="">No repeat</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                        <input type="date" name="due_date" title="Due date" aria-label="Due date">
+                    </div>
                 </form>
             </div>
         </div>
@@ -108,11 +120,23 @@
     <div class="add-subtodo">
         <button class="add-subtodo-btn" onclick="toggleSubtodoForm({{ todo.id }})">+ Add sub-task</button>
         <div class="add-subtodo-form" id="subtodo-form-{{ todo.id }}">
-            <form class="subtodo-add-form" method="POST" action="/add" style="display:flex;gap:0.5rem;flex:1;">
+            <form class="subtodo-add-form" method="POST" action="/add">
                 <input type="hidden" name="list" value="{{ current_list }}">
                 <input type="hidden" name="parent_id" value="{{ todo.id }}">
-                <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off" style="flex:1;">
-                <button type="submit" class="btn btn-primary">Add</button>
+                <div class="form-row subtodo-add-row">
+                    <input type="text" name="title" placeholder="Sub-task title" required autocomplete="off">
+                    <button type="submit" class="btn btn-primary">Add</button>
+                </div>
+                <div class="form-row subtodo-add-meta">
+                    <select name="recurrence" aria-label="Repeat">
+                        <option value="">No repeat</option>
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                    </select>
+                    <input type="date" name="due_date" title="Due date" aria-label="Due date">
+                </div>
             </form>
         </div>
     </div>
@@ -347,15 +371,16 @@
             word-break: break-word;
         }
 
-        .todo-item.completed .todo-title {
+        .todo-item.completed .todo-title:not(.todo-title-collapsible) {
             text-decoration: line-through;
             color: var(--text-muted);
         }
 
         .todo-title-collapsible {
             display: flex;
-            align-items: baseline;
-            gap: 0.35rem;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.2rem;
             width: 100%;
             max-width: 100%;
             padding: 0;
@@ -369,6 +394,14 @@
             text-align: left;
             cursor: pointer;
             word-break: break-word;
+        }
+
+        .todo-title-row {
+            display: flex;
+            align-items: baseline;
+            gap: 0.35rem;
+            width: 100%;
+            min-width: 0;
         }
 
         .todo-title-collapsible:focus-visible {
@@ -397,19 +430,24 @@
             transform: translateY(-0.05em) rotate(-90deg);
         }
 
-        .todo-item.completed .todo-title-collapsible {
+        .todo-item.completed .todo-title-row {
             text-decoration: line-through;
             color: var(--text-muted);
         }
 
+        .todo-item.completed .todo-title-collapsible {
+            color: var(--text-muted);
+        }
+
         .todo-subtask-summary {
-            flex-shrink: 0;
-            margin-left: auto;
-            padding-left: 0.75rem;
+            width: 100%;
+            padding-left: 1.05rem;
+            box-sizing: border-box;
             font-size: 0.75rem;
             font-weight: 400;
             color: var(--text-muted);
-            white-space: nowrap;
+            line-height: 1.3;
+            text-align: left;
         }
 
         .todo-item:not(.subtasks-collapsed) .todo-subtask-summary {
@@ -537,6 +575,38 @@
 
         .add-subtodo-form.active {
             display: flex;
+            flex-direction: column;
+        }
+
+        .subtodo-add-form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        .subtodo-add-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .subtodo-add-row input[name="title"] {
+            flex: 1;
+            min-width: 10rem;
+        }
+
+        .subtodo-add-meta {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .subtodo-add-meta select {
+            flex: 1;
+            min-width: 8rem;
         }
 
         .add-subtodo-btn {

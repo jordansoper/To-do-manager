@@ -55,7 +55,7 @@
                         android:paddingTop="8dp"
                         android:paddingBottom="88dp"
                         android:scrollbars="vertical"
-                        tools:listitem="@layout/item_todo" />
+                        tools:listitem="@layout/item_todo_group" />
 
                     <TextView
                         android:id="@+id/emptyState"

@@ -77,7 +77,8 @@ data class FlatRow(
 
 sealed class DisplayRow {
     data class Section(val name: String) : DisplayRow()
-    data class Task(val row: FlatRow) : DisplayRow()
+    /** One root task and its visible descendants in a single card (Google Tasks–style). */
+    data class TaskGroup(val root: FlatRow, val descendants: List<FlatRow>) : DisplayRow()
 }
 
 fun flattenWithCollapse(
@@ -111,6 +112,34 @@ fun flattenWithCollapse(
     return out
 }
 
+fun buildTaskGroups(nodes: List<TodoNode>?, collapsedIds: Set<Int>): List<DisplayRow> {
+    if (nodes.isNullOrEmpty()) return emptyList()
+    val out = ArrayList<DisplayRow>()
+    for (n in nodes) {
+        val ch = n.children.orEmpty()
+        val hasCh = ch.isNotEmpty()
+        val done = ch.count { it.completed }
+        val root = FlatRow(
+            id = n.id,
+            title = n.title,
+            depth = 0,
+            completed = n.completed,
+            dueDate = n.dueDate,
+            recurrence = n.recurrence,
+            hasChildren = hasCh,
+            subDone = done,
+            subTotal = ch.size
+        )
+        val descendants = if (hasCh && n.id !in collapsedIds) {
+            flattenWithCollapse(ch, 1, collapsedIds)
+        } else {
+            emptyList()
+        }
+        out.add(DisplayRow.TaskGroup(root, descendants))
+    }
+    return out
+}
+
 fun buildDisplayRows(
     response: TodosResponse,
     collapsedIds: Set<Int>
@@ -122,14 +151,12 @@ fun buildDisplayRows(
             val out = ArrayList<DisplayRow>()
             for (s in sec) {
                 out.add(DisplayRow.Section(s.name))
-                flattenWithCollapse(s.todos, 0, collapsedIds).forEach {
-                    out.add(DisplayRow.Task(it))
-                }
+                out.addAll(buildTaskGroups(s.todos, collapsedIds))
             }
             out
         }
-        "single" -> flattenWithCollapse(response.todos, 0, collapsedIds).map { DisplayRow.Task(it) }
-        else -> flattenWithCollapse(response.todos, 0, collapsedIds).map { DisplayRow.Task(it) }
+        "single" -> buildTaskGroups(response.todos, collapsedIds)
+        else -> buildTaskGroups(response.todos, collapsedIds)
     }
 }
 
