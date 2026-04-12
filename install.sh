@@ -20,10 +20,16 @@ if ! id "$APP_USER" &>/dev/null; then
 fi
 
 echo "==> Setting up application directory..."
+if [[ ! -f templates/index.html ]]; then
+    echo "ERROR: templates/index.html not found. Run install.sh from the repo root (where app.py and templates/ live)."
+    exit 1
+fi
 mkdir -p "$APP_DIR"
 cp app.py requirements.txt "$APP_DIR/"
-cp -r templates "$APP_DIR/" 2>/dev/null || true
-cp -r static "$APP_DIR/" 2>/dev/null || true
+cp -r templates "$APP_DIR/"
+if [[ -d static ]]; then
+    cp -r static "$APP_DIR/"
+fi
 
 echo "==> Creating Python virtual environment..."
 python3 -m venv "$APP_DIR/venv"

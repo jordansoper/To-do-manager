@@ -19,7 +19,16 @@ from flask import (
 from flask.signals import got_request_exception
 from werkzeug.exceptions import HTTPException
 
-app = Flask(__name__)
+# Resolve paths from this file so templates/instance work even if WorkingDirectory/CWD is wrong
+# (common cause of TemplateNotFound → 500 under systemd/gunicorn).
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_INSTANCE_DIR = os.path.join(_APP_DIR, "instance")
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(_APP_DIR, "templates"),
+    instance_path=_INSTANCE_DIR,
+)
 app.config["DATABASE"] = os.path.join(app.instance_path, "todos.db")
 
 os.makedirs(app.instance_path, exist_ok=True)
@@ -103,12 +112,16 @@ with app.app_context():
 @got_request_exception.connect_via(app)
 def _log_request_exception(sender, exception, **extra):
     """Log real errors without replacing Flask/Werkzeug's own HTTP error handling."""
-    if isinstance(exception, HTTPException):
-        return
-    if has_request_context():
-        sender.logger.exception("%s %s", request.method, request.path)
-    else:
-        sender.logger.exception("Unhandled exception (outside request context)")
+    try:
+        if isinstance(exception, HTTPException):
+            return
+        if has_request_context():
+            sender.logger.exception("%s %s", request.method, request.path)
+        else:
+            sender.logger.exception("Unhandled exception (outside request context)")
+    except Exception:
+        # Never interfere with Flask's error response
+        pass
 
 
 def todo_to_dict(row):
@@ -347,13 +360,40 @@ def require_api_auth(f):
 
 @app.route("/api/v1/health", methods=["GET"])
 def api_health():
+    template_ok = os.path.isfile(os.path.join(_APP_DIR, "templates", "index.html"))
     try:
         db = get_db()
         db.execute("SELECT 1").fetchone()
-        return jsonify(ok=True, database="ok")
+        db_ok = True
+        db_detail = None
     except (OSError, sqlite3.Error) as e:
+        db_ok = False
+        db_detail = str(e)
         app.logger.exception("health check failed")
-        return jsonify(ok=False, database="error", detail=str(e)), 500
+
+    if not template_ok:
+        return (
+            jsonify(
+                ok=False,
+                database="error" if not db_ok else "ok",
+                templates="missing",
+                detail="templates/index.html not found next to app.py",
+                app_dir=_APP_DIR,
+            ),
+            500,
+        )
+    if not db_ok:
+        return (
+            jsonify(
+                ok=False,
+                database="error",
+                templates="ok",
+                detail=db_detail,
+                app_dir=_APP_DIR,
+            ),
+            500,
+        )
+    return jsonify(ok=True, database="ok", templates="ok")
 
 
 @app.route("/api/v1/todos", methods=["GET"])
@@ -560,7 +600,14 @@ def process_overdue_recurrences(db):
             uncomplete_recursive(db, todo["id"])
         except (TypeError, ValueError):
             continue
-    db.commit()
+    try:
+        db.commit()
+    except sqlite3.Error:
+        app.logger.exception("process_overdue_recurrences commit failed")
+        try:
+            db.rollback()
+        except sqlite3.Error:
+            pass
 
 
 @app.route("/add", methods=["POST"])
