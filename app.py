@@ -1,8 +1,8 @@
+import calendar
 import sqlite3
 import os
 from functools import wraps
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
+from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 
 app = Flask(__name__)
@@ -189,21 +189,57 @@ def uncomplete_parent_chain(db, todo_id):
         uncomplete_parent_chain(db, parent_id)
 
 
+def _parse_due_date(value):
+    """Parse stored due_date into a date; tolerate missing or bad values."""
+    if not value or not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if isinstance(dt, datetime):
+            return dt.date()
+    except ValueError:
+        pass
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        return None
+
+
+def _add_months(d, n):
+    m = d.month - 1 + n
+    y = d.year + m // 12
+    m = m % 12 + 1
+    last = calendar.monthrange(y, m)[1]
+    day = min(d.day, last)
+    return date(y, m, day)
+
+
+def _add_years(d, n):
+    y = d.year + n
+    try:
+        return d.replace(year=y)
+    except ValueError:
+        last = calendar.monthrange(y, d.month)[1]
+        return date(y, d.month, min(d.day, last))
+
+
 def compute_next_due(recurrence, current_due):
     """Compute the next due date based on recurrence type."""
-    if current_due:
-        base = datetime.fromisoformat(current_due)
-    else:
-        base = datetime.utcnow()
+    d = _parse_due_date(current_due) if current_due else None
+    if d is None:
+        d = datetime.utcnow().date()
 
     if recurrence == "daily":
-        return (base + timedelta(days=1)).date().isoformat()
-    elif recurrence == "weekly":
-        return (base + timedelta(weeks=1)).date().isoformat()
-    elif recurrence == "monthly":
-        return (base + relativedelta(months=1)).date().isoformat()
-    elif recurrence == "yearly":
-        return (base + relativedelta(years=1)).date().isoformat()
+        return (d + timedelta(days=1)).isoformat()
+    if recurrence == "weekly":
+        return (d + timedelta(weeks=1)).isoformat()
+    if recurrence == "monthly":
+        return _add_months(d, 1).isoformat()
+    if recurrence == "yearly":
+        return _add_years(d, 1).isoformat()
     return None
 
 
@@ -468,14 +504,16 @@ def process_overdue_recurrences(db):
         (today,),
     ).fetchall()
     for todo in overdue:
-        next_due = compute_next_due(todo["recurrence"], todo["due_date"])
-        # Keep advancing until due date is today or future
-        while next_due and next_due < today:
-            next_due = compute_next_due(todo["recurrence"], next_due)
-        db.execute(
-            "UPDATE todos SET due_date = ? WHERE id = ?", (next_due, todo["id"])
-        )
-        uncomplete_recursive(db, todo["id"])
+        try:
+            next_due = compute_next_due(todo["recurrence"], todo["due_date"])
+            while next_due and next_due < today:
+                next_due = compute_next_due(todo["recurrence"], next_due)
+            db.execute(
+                "UPDATE todos SET due_date = ? WHERE id = ?", (next_due, todo["id"])
+            )
+            uncomplete_recursive(db, todo["id"])
+        except (TypeError, ValueError):
+            continue
     db.commit()
 
 
