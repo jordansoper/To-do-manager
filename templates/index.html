@@ -1,7 +1,14 @@
 {# Recursive macro for rendering todos - must be defined before use #}
 {% macro render_todo(todo, current_list) %}
 {% set sub_total = (todo.children | length) if todo.children else 0 %}
-{% set sub_done = (todo.children | selectattr('completed') | list | length) if todo.children else 0 %}
+{# Avoid selectattr('completed'): API/DB may use 0/1 ints; count truthy completions portably #}
+{% set ns = namespace(done=0) %}
+{% if todo.children %}
+{% for c in todo.children %}
+{% if c.completed %}{% set ns.done = ns.done + 1 %}{% endif %}
+{% endfor %}
+{% endif %}
+{% set sub_done = ns.done %}
 <li class="todo-item {{ 'completed' if todo.completed }}" data-todo-id="{{ todo.id }}">
     <div class="todo-main" id="todo-main-{{ todo.id }}">
         <form method="POST" action="/toggle/{{ todo.id }}" style="display:flex;align-items:center;">

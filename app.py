@@ -393,6 +393,45 @@ def api_health():
             ),
             500,
         )
+    # Deep check: actually render index.html (GET / can still 500 if Jinja fails on real data).
+    if request.args.get("render") == "1":
+        try:
+            today = datetime.utcnow().date().isoformat()
+            sample_lists = [{"id": 1, "name": "General", "sort_order": 0}]
+            render_template(
+                "index.html",
+                todos=[],
+                list_sections=[],
+                view_mode="single",
+                current_list="1",
+                current_list_id=1,
+                lists=sample_lists,
+                has_tasks=False,
+                now_date=today,
+            )
+            render_template(
+                "index.html",
+                todos=[],
+                list_sections=[{"id": 1, "name": "General", "todos": []}],
+                view_mode="all",
+                current_list="all",
+                current_list_id=None,
+                lists=sample_lists,
+                has_tasks=False,
+                now_date=today,
+            )
+            return jsonify(ok=True, database="ok", templates="ok", render="ok")
+        except Exception as e:
+            app.logger.exception("health render self-test failed")
+            return (
+                jsonify(
+                    ok=False,
+                    render="failed",
+                    detail=str(e),
+                    app_dir=_APP_DIR,
+                ),
+                500,
+            )
     return jsonify(ok=True, database="ok", templates="ok")
 
 
@@ -400,7 +439,7 @@ def api_health():
 @require_api_auth
 def api_list_todos():
     db = get_db()
-    process_overdue_recurrences(db)
+    _safe_process_overdue(db)
     now = datetime.utcnow().isoformat() + "Z"
     list_param = (request.args.get("list") or "").strip()
     if list_param == "all":
@@ -533,7 +572,7 @@ def api_toggle_todo(todo_id):
 @app.route("/")
 def index():
     db = get_db()
-    process_overdue_recurrences(db)
+    _safe_process_overdue(db)
     today = datetime.utcnow().date().isoformat()
     list_param = (request.args.get("list") or "1").strip()
     all_lists = get_all_lists(db)
@@ -577,37 +616,48 @@ def index():
 
 def process_overdue_recurrences(db):
     """Auto-reset recurring todos that are past their due date."""
-    today = datetime.utcnow().date().isoformat()
-    overdue = db.execute(
-        """
-        SELECT * FROM todos
-        WHERE recurrence IS NOT NULL
-          AND parent_id IS NULL
-          AND due_date IS NOT NULL
-          AND due_date < ?
-          AND completed = 1
-        """,
-        (today,),
-    ).fetchall()
-    for todo in overdue:
-        try:
-            next_due = compute_next_due(todo["recurrence"], todo["due_date"])
-            while next_due and next_due < today:
-                next_due = compute_next_due(todo["recurrence"], next_due)
-            db.execute(
-                "UPDATE todos SET due_date = ? WHERE id = ?", (next_due, todo["id"])
-            )
-            uncomplete_recursive(db, todo["id"])
-        except (TypeError, ValueError):
-            continue
     try:
+        today = datetime.utcnow().date().isoformat()
+        overdue = db.execute(
+            """
+            SELECT * FROM todos
+            WHERE recurrence IS NOT NULL
+              AND parent_id IS NULL
+              AND due_date IS NOT NULL
+              AND due_date < ?
+              AND completed = 1
+            """,
+            (today,),
+        ).fetchall()
+        for todo in overdue:
+            try:
+                next_due = compute_next_due(todo["recurrence"], todo["due_date"])
+                n = 0
+                while next_due and next_due < today and n < 4000:
+                    n += 1
+                    next_due = compute_next_due(todo["recurrence"], next_due)
+                db.execute(
+                    "UPDATE todos SET due_date = ? WHERE id = ?",
+                    (next_due, todo["id"]),
+                )
+                uncomplete_recursive(db, todo["id"])
+            except (TypeError, ValueError):
+                continue
         db.commit()
     except sqlite3.Error:
-        app.logger.exception("process_overdue_recurrences commit failed")
+        app.logger.exception("process_overdue_recurrences failed")
         try:
             db.rollback()
         except sqlite3.Error:
             pass
+
+
+def _safe_process_overdue(db):
+    """Never let overdue maintenance take down a request."""
+    try:
+        process_overdue_recurrences(db)
+    except Exception:
+        app.logger.exception("process_overdue_recurrences unexpected error")
 
 
 @app.route("/add", methods=["POST"])
