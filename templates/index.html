@@ -1,5 +1,7 @@
 {# Recursive macro for rendering todos - must be defined before use #}
 {% macro render_todo(todo) %}
+{% set sub_total = (todo.children | length) if todo.children else 0 %}
+{% set sub_done = (todo.children | selectattr('completed') | list | length) if todo.children else 0 %}
 <li class="todo-item {{ 'completed' if todo.completed }}" data-todo-id="{{ todo.id }}">
     <div class="todo-main" id="todo-main-{{ todo.id }}">
         <form method="POST" action="/toggle/{{ todo.id }}" style="display:flex;align-items:center;">
@@ -10,6 +12,7 @@
             <button type="button" class="todo-title todo-title-collapsible" data-todo-id="{{ todo.id }}" aria-expanded="true" title="Hide sub-tasks">
                 <span class="todo-collapse-caret" aria-hidden="true">▾</span>
                 <span class="todo-title-text">{{ todo.title }}</span>
+                <span class="todo-subtask-summary">{{ sub_done }}/{{ sub_total }} sub-tasks completed</span>
             </button>
             {% else %}
             <div class="todo-title">{{ todo.title }}</div>
@@ -64,12 +67,10 @@
     <div class="todo-branch" id="todo-branch-{{ todo.id }}">
         <!-- Progress bar -->
         <div class="todo-progress">
-            {% set total = todo.children | length %}
-            {% set done = todo.children | selectattr('completed') | list | length %}
             <div class="progress-bar-bg">
-                <div class="progress-bar-fill" style="width: {{ (done / total * 100) if total else 0 }}%"></div>
+                <div class="progress-bar-fill" style="width: {{ (sub_done / sub_total * 100) if sub_total else 0 }}%"></div>
             </div>
-            <div class="progress-text">{{ done }}/{{ total }} sub-tasks completed</div>
+            <div class="progress-text">{{ sub_done }}/{{ sub_total }} sub-tasks completed</div>
         </div>
 
         <ul class="todo-children">
@@ -363,6 +364,12 @@
             border-radius: 2px;
         }
 
+        .todo-title-collapsible .todo-title-text {
+            flex: 1;
+            min-width: 0;
+            text-align: left;
+        }
+
         .todo-collapse-caret {
             display: inline-block;
             flex-shrink: 0;
@@ -379,6 +386,25 @@
 
         .todo-item.completed .todo-title-collapsible {
             text-decoration: line-through;
+            color: var(--text-muted);
+        }
+
+        .todo-subtask-summary {
+            flex-shrink: 0;
+            margin-left: auto;
+            padding-left: 0.75rem;
+            font-size: 0.75rem;
+            font-weight: 400;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .todo-item:not(.subtasks-collapsed) .todo-subtask-summary {
+            display: none;
+        }
+
+        .todo-item.completed .todo-subtask-summary {
+            text-decoration: none;
             color: var(--text-muted);
         }
 
