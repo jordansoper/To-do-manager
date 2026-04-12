@@ -9,9 +9,10 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.todoer.manager.data.Prefs
 import com.todoer.manager.data.RootSnap
-import com.todoer.manager.data.TodoNode
+import com.todoer.manager.data.TodosResponse
 import com.todoer.manager.data.collectDueToday
 import com.todoer.manager.data.rootSnapshots
+import com.todoer.manager.data.rootsForNotifications
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -38,7 +39,8 @@ object NotificationHelper {
         )
     }
 
-    fun processAfterFetch(context: Context, roots: List<TodoNode>) {
+    fun processAfterFetch(context: Context, response: TodosResponse) {
+        val roots = rootsForNotifications(response)
         val prefs = Prefs(context)
         val gson = Gson()
         val type = object : TypeToken<Map<String, RootSnap>>() {}.type

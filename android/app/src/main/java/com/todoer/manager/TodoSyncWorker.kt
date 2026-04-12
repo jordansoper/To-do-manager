@@ -24,8 +24,8 @@ class TodoSyncWorker(
 
         return try {
             val api = TodoApiFactory.create(base, prefs.apiKey?.trim())
-            val res = api.getTodos()
-            NotificationHelper.processAfterFetch(applicationContext, res.todos)
+            val res = api.getTodos(null)
+            NotificationHelper.processAfterFetch(applicationContext, res)
             Result.success()
         } catch (_: Exception) {
             Result.success()

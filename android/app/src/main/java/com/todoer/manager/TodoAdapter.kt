@@ -1,37 +1,61 @@
 package com.todoer.manager
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
 import androidx.core.view.updatePaddingRelative
 import androidx.recyclerview.widget.RecyclerView
-import com.todoer.manager.data.FlatRow
+import com.todoer.manager.data.DisplayRow
+import com.todoer.manager.databinding.ItemSectionBinding
 import com.todoer.manager.databinding.ItemTodoBinding
 
 class TodoAdapter(
-    private val onToggle: (Int) -> Unit
-) : RecyclerView.Adapter<TodoAdapter.VH>() {
+    private val collapsedIds: MutableSet<Int>,
+    private val onToggle: (Int) -> Unit,
+    private val onCollapseToggle: (Int) -> Unit,
+    private val onAddSubtask: (Int) -> Unit
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    private var rows: List<FlatRow> = emptyList()
+    private var rows: List<DisplayRow> = emptyList()
 
-    fun submit(list: List<FlatRow>) {
+    fun submit(list: List<DisplayRow>) {
         rows = list
         notifyDataSetChanged()
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val binding = ItemTodoBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        return VH(binding)
+    override fun getItemViewType(position: Int): Int =
+        when (rows[position]) {
+            is DisplayRow.Section -> VIEW_SECTION
+            is DisplayRow.Task -> VIEW_TASK
+        }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            VIEW_SECTION -> SectionVH(ItemSectionBinding.inflate(inflater, parent, false))
+            else -> TaskVH(ItemTodoBinding.inflate(inflater, parent, false))
+        }
     }
 
     override fun getItemCount(): Int = rows.size
 
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        holder.bind(rows[position])
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val item = rows[position]) {
+            is DisplayRow.Section -> (holder as SectionVH).bind(item.name)
+            is DisplayRow.Task -> (holder as TaskVH).bind(item.row)
+        }
     }
 
-    inner class VH(private val binding: ItemTodoBinding) : RecyclerView.ViewHolder(binding.root) {
-        fun bind(row: FlatRow) {
+    inner class SectionVH(private val binding: ItemSectionBinding) : RecyclerView.ViewHolder(binding.root) {
+        fun bind(name: String) {
+            binding.sectionTitle.text = name
+        }
+    }
+
+    inner class TaskVH(private val binding: ItemTodoBinding) : RecyclerView.ViewHolder(binding.root) {
+        fun bind(row: com.todoer.manager.data.FlatRow) {
             val d = binding.root.resources.displayMetrics.density
             val baseStart = (8 * d).toInt()
             val indent = (16 * d * row.depth).toInt()
@@ -51,16 +75,37 @@ class TodoAdapter(
             val parts = mutableListOf<String>()
             row.dueDate?.let { parts.add("Due $it") }
             row.recurrence?.let { parts.add(it) }
+            if (row.hasChildren && row.subTotal > 0) {
+                parts.add("${row.subDone}/${row.subTotal} sub-tasks")
+            }
             if (parts.isEmpty()) {
-                binding.meta.visibility = android.view.View.GONE
+                binding.meta.visibility = View.GONE
             } else {
-                binding.meta.visibility = android.view.View.VISIBLE
+                binding.meta.visibility = View.VISIBLE
                 binding.meta.text = parts.joinToString(" · ")
             }
 
-            binding.check.setOnClickListener {
-                onToggle(row.id)
+            binding.check.setOnClickListener { onToggle(row.id) }
+
+            if (row.hasChildren) {
+                binding.collapseChevron.visibility = View.VISIBLE
+                val collapsed = collapsedIds.contains(row.id)
+                binding.collapseChevron.text = if (collapsed) "▸" else "▾"
+                binding.collapseChevron.setOnClickListener { onCollapseToggle(row.id) }
+                binding.title.setOnClickListener { onCollapseToggle(row.id) }
+            } else {
+                binding.collapseChevron.visibility = View.GONE
+                binding.collapseChevron.setOnClickListener(null)
+                binding.title.setOnClickListener(null)
             }
+
+            binding.btnSubtask.isVisible = true
+            binding.btnSubtask.setOnClickListener { onAddSubtask(row.id) }
         }
+    }
+
+    companion object {
+        private const val VIEW_SECTION = 0
+        private const val VIEW_TASK = 1
     }
 }

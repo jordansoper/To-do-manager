@@ -13,6 +13,11 @@ class Prefs(context: Context) {
         get() = p.getString("api_key", null)
         set(value) { p.edit().putString("api_key", value).apply() }
 
+    /** "all" or list id as string, e.g. "1" */
+    var selectedListKey: String
+        get() = p.getString("selected_list", "1") ?: "1"
+        set(value) { p.edit().putString("selected_list", value).apply() }
+
     fun lastRootSnapshotJson(): String? = p.getString("root_snapshot_json", null)
 
     fun setLastRootSnapshotJson(json: String?) {

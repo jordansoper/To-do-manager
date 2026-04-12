@@ -45,7 +45,26 @@ def init_db():
         )
         """
     )
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            sort_order INTEGER DEFAULT 0
+        )
+        """
+    )
+    migrate_lists_schema(db)
     db.commit()
+
+
+def migrate_lists_schema(db):
+    """Add lists + todos.list_id for existing databases."""
+    if db.execute("SELECT COUNT(*) FROM lists").fetchone()[0] == 0:
+        db.execute("INSERT INTO lists (id, name, sort_order) VALUES (1, 'General', 0)")
+    cols = [r["name"] for r in db.execute("PRAGMA table_info(todos)").fetchall()]
+    if "list_id" not in cols:
+        db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")
 
 
 with app.app_context():
@@ -53,7 +72,7 @@ with app.app_context():
 
 
 def todo_to_dict(row):
-    return {
+    d = {
         "id": row["id"],
         "title": row["title"],
         "description": row["description"],
@@ -65,6 +84,11 @@ def todo_to_dict(row):
         "completed_at": row["completed_at"],
         "sort_order": row["sort_order"],
     }
+    try:
+        d["list_id"] = row["list_id"]
+    except (KeyError, IndexError):
+        d["list_id"] = 1
+    return d
 
 
 def get_children(db, parent_id):
@@ -80,17 +104,52 @@ def get_children(db, parent_id):
     return children
 
 
-def build_todo_tree(db):
-    """Build a tree of top-level todos with nested children."""
-    roots = db.execute(
-        "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY sort_order, created_at"
-    ).fetchall()
+def build_todo_tree(db, list_id=None):
+    """Build a tree of top-level todos with nested children, optionally scoped to a list."""
+    if list_id is None:
+        roots = db.execute(
+            "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY list_id, sort_order, created_at"
+        ).fetchall()
+    else:
+        roots = db.execute(
+            """
+            SELECT * FROM todos WHERE parent_id IS NULL AND list_id = ?
+            ORDER BY sort_order, created_at
+            """,
+            (list_id,),
+        ).fetchall()
     tree = []
     for row in roots:
         todo = todo_to_dict(row)
         todo["children"] = get_children(db, todo["id"])
         tree.append(todo)
     return tree
+
+
+def get_all_lists(db):
+    rows = db.execute("SELECT * FROM lists ORDER BY sort_order, id").fetchall()
+    return [{"id": r["id"], "name": r["name"], "sort_order": r["sort_order"]} for r in rows]
+
+
+def get_list_sections(db):
+    """For 'all tasks' view: each list with its own todo tree."""
+    sections = []
+    for lst in get_all_lists(db):
+        lid = lst["id"]
+        sections.append(
+            {
+                "id": lid,
+                "name": lst["name"],
+                "todos": build_todo_tree(db, list_id=lid),
+            }
+        )
+    return sections
+
+
+def redirect_to_index():
+    """After POST, return to the list we came from (form field or query)."""
+    lst = request.form.get("list") or request.args.get("list") or "1"
+    return redirect(url_for("index", list=lst))
 
 
 def all_children_completed(db, parent_id):
@@ -220,11 +279,101 @@ def api_health():
 def api_list_todos():
     db = get_db()
     process_overdue_recurrences(db)
+    now = datetime.utcnow().isoformat() + "Z"
+    list_param = (request.args.get("list") or "").strip()
+    if list_param == "all":
+        sections = get_list_sections(db)
+        return jsonify(
+            server_time=now,
+            mode="all",
+            sections=[
+                {"id": s["id"], "name": s["name"], "todos": s["todos"]}
+                for s in sections
+            ],
+        )
+    if list_param:
+        try:
+            lid = int(list_param)
+        except ValueError:
+            lid = 1
+        if not db.execute("SELECT 1 FROM lists WHERE id = ?", (lid,)).fetchone():
+            lid = 1
+        todos = build_todo_tree(db, list_id=lid)
+        return jsonify(
+            server_time=now,
+            mode="single",
+            list_id=lid,
+            todos=todos,
+        )
     todos = build_todo_tree(db)
     return jsonify(
-        server_time=datetime.utcnow().isoformat() + "Z",
+        server_time=now,
+        mode="legacy",
         todos=todos,
     )
+
+
+@app.route("/api/v1/lists", methods=["GET"])
+@require_api_auth
+def api_get_lists():
+    db = get_db()
+    return jsonify(lists=get_all_lists(db))
+
+
+@app.route("/api/v1/lists", methods=["POST"])
+@require_api_auth
+def api_post_list():
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(error="name required"), 400
+    db = get_db()
+    mx = db.execute("SELECT COALESCE(MAX(sort_order), 0) FROM lists").fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO lists (name, sort_order) VALUES (?, ?)",
+        (name, int(mx) + 1),
+    )
+    db.commit()
+    return jsonify(ok=True, id=cur.lastrowid)
+
+
+@app.route("/api/v1/todos", methods=["POST"])
+@require_api_auth
+def api_post_todo():
+    data = request.get_json(force=True, silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify(error="title required"), 400
+    description = (data.get("description") or "").strip()
+    parent_id = data.get("parent_id")
+    recurrence = data.get("recurrence") or None
+    due_date = data.get("due_date") or None
+
+    db = get_db()
+    if parent_id is not None:
+        parent_id = int(parent_id)
+        recurrence = None
+        due_date = None
+        prow = db.execute("SELECT list_id FROM todos WHERE id = ?", (parent_id,)).fetchone()
+        list_id = int(prow["list_id"]) if prow and prow["list_id"] is not None else 1
+    else:
+        raw_lid = data.get("list_id") or 1
+        try:
+            list_id = int(raw_lid)
+        except (TypeError, ValueError):
+            list_id = 1
+        if not db.execute("SELECT 1 FROM lists WHERE id = ?", (list_id,)).fetchone():
+            list_id = 1
+
+    cur = db.execute(
+        """
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (title, description, parent_id, recurrence, due_date, list_id),
+    )
+    db.commit()
+    return jsonify(ok=True, id=cur.lastrowid)
 
 
 @app.route("/api/v1/todos/<int:todo_id>/toggle", methods=["POST"])
@@ -263,9 +412,45 @@ def api_toggle_todo(todo_id):
 def index():
     db = get_db()
     process_overdue_recurrences(db)
-    todos = build_todo_tree(db)
     today = datetime.utcnow().date().isoformat()
-    return render_template("index.html", todos=todos, now_date=today)
+    list_param = (request.args.get("list") or "1").strip()
+    all_lists = get_all_lists(db)
+
+    if list_param == "all":
+        sections = get_list_sections(db)
+        has_tasks = any(len(s["todos"]) > 0 for s in sections)
+        return render_template(
+            "index.html",
+            todos=[],
+            list_sections=sections,
+            view_mode="all",
+            current_list="all",
+            current_list_id=None,
+            lists=all_lists,
+            has_tasks=has_tasks,
+            now_date=today,
+        )
+
+    try:
+        list_id = int(list_param)
+    except ValueError:
+        list_id = 1
+    exists = db.execute("SELECT 1 FROM lists WHERE id = ?", (list_id,)).fetchone()
+    if not exists:
+        list_id = 1
+
+    todos = build_todo_tree(db, list_id=list_id)
+    return render_template(
+        "index.html",
+        todos=todos,
+        list_sections=[],
+        view_mode="single",
+        current_list=str(list_id),
+        current_list_id=list_id,
+        lists=all_lists,
+        has_tasks=bool(todos),
+        now_date=today,
+    )
 
 
 def process_overdue_recurrences(db):
@@ -298,26 +483,35 @@ def process_overdue_recurrences(db):
 def add_todo():
     title = request.form.get("title", "").strip()
     if not title:
-        return redirect(url_for("index"))
+        return redirect_to_index()
 
     description = request.form.get("description", "").strip()
     parent_id = request.form.get("parent_id") or None
     recurrence = request.form.get("recurrence") or None
     due_date = request.form.get("due_date") or None
 
+    db = get_db()
     if parent_id:
         parent_id = int(parent_id)
-        # Sub-todos don't have their own recurrence
         recurrence = None
         due_date = None
+        prow = db.execute("SELECT list_id FROM todos WHERE id = ?", (parent_id,)).fetchone()
+        list_id = int(prow["list_id"]) if prow and prow["list_id"] is not None else 1
+    else:
+        raw_lid = request.form.get("list_id") or request.form.get("target_list_id") or "1"
+        try:
+            list_id = int(raw_lid)
+        except ValueError:
+            list_id = 1
+        if not db.execute("SELECT 1 FROM lists WHERE id = ?", (list_id,)).fetchone():
+            list_id = 1
 
-    db = get_db()
     cur = db.execute(
         """
-        INSERT INTO todos (title, description, parent_id, recurrence, due_date)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (title, description, parent_id, recurrence, due_date),
+        (title, description, parent_id, recurrence, due_date, list_id),
     )
     db.commit()
     new_id = cur.lastrowid
@@ -326,7 +520,7 @@ def add_todo():
         and parent_id
     ):
         return jsonify(ok=True, id=new_id)
-    return redirect(url_for("index"))
+    return redirect_to_index()
 
 
 @app.route("/toggle/<int:todo_id>", methods=["POST"])
@@ -334,7 +528,7 @@ def toggle_todo(todo_id):
     db = get_db()
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo:
-        return redirect(url_for("index"))
+        return redirect_to_index()
 
     new_status = 0 if todo["completed"] else 1
 
@@ -356,7 +550,7 @@ def toggle_todo(todo_id):
         uncomplete_parent_chain(db, todo_id)
         db.commit()
 
-    return redirect(url_for("index"))
+    return redirect_to_index()
 
 
 def complete_recursive(db, todo_id, timestamp):
@@ -377,7 +571,7 @@ def edit_todo(todo_id):
     db = get_db()
     title = request.form.get("title", "").strip()
     if not title:
-        return redirect(url_for("index"))
+        return redirect_to_index()
 
     description = request.form.get("description", "").strip()
     recurrence = request.form.get("recurrence") or None
@@ -385,7 +579,7 @@ def edit_todo(todo_id):
 
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo:
-        return redirect(url_for("index"))
+        return redirect_to_index()
 
     # Sub-todos don't have their own recurrence
     if todo["parent_id"]:
@@ -400,7 +594,7 @@ def edit_todo(todo_id):
         (title, description, recurrence, due_date, todo_id),
     )
     db.commit()
-    return redirect(url_for("index"))
+    return redirect_to_index()
 
 
 @app.route("/delete/<int:todo_id>", methods=["POST"])
@@ -424,7 +618,22 @@ def delete_todo(todo_id):
             propagate_completion(db, todo["parent_id"])
             db.commit()
 
-    return redirect(url_for("index"))
+    return redirect_to_index()
+
+
+@app.route("/lists/add", methods=["POST"])
+def add_list():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect_to_index()
+    db = get_db()
+    mx = db.execute("SELECT COALESCE(MAX(sort_order), 0) FROM lists").fetchone()[0]
+    db.execute(
+        "INSERT INTO lists (name, sort_order) VALUES (?, ?)",
+        (name, int(mx) + 1),
+    )
+    db.commit()
+    return redirect_to_index()
 
 
 if __name__ == "__main__":

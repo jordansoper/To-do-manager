@@ -18,8 +18,8 @@
         android:gravity="center_vertical"
         android:minHeight="52dp"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingEnd="12dp"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
         android:paddingTop="10dp"
         android:paddingBottom="10dp">
 
@@ -30,6 +30,17 @@
             android:minWidth="48dp"
             android:minHeight="48dp"
             app:buttonTint="@color/accent" />
+
+        <TextView
+            android:id="@+id/collapseChevron"
+            android:layout_width="32dp"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="▾"
+            android:textColor="@color/text_muted"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:visibility="visible" />
 
         <LinearLayout
             android:layout_width="0dp"
@@ -56,5 +67,14 @@
                 tools:text="Due 2026-04-12 · weekly"
                 tools:visibility="visible" />
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnSubtask"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/add_subtask"
+            app:srcCompat="@drawable/ic_add_subtask"
+            app:tint="@color/text_muted" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

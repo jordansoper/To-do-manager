@@ -4,14 +4,25 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
 interface TodoApiService {
     @GET("api/v1/todos")
-    suspend fun getTodos(): TodosResponse
+    suspend fun getTodos(@Query("list") list: String?): TodosResponse
+
+    @GET("api/v1/lists")
+    suspend fun getLists(): ListsResponse
+
+    @POST("api/v1/todos")
+    suspend fun addTodo(@Body body: AddTodoBody): SimpleOkResponse
+
+    @POST("api/v1/lists")
+    suspend fun addList(@Body body: AddListBody): SimpleOkResponse
 
     @POST("api/v1/todos/{id}/toggle")
     suspend fun toggle(@Path("id") id: Int): ToggleResponse
