@@ -25,9 +25,9 @@
     <string name="task_title">Title</string>
     <string name="task_description">Description (optional)</string>
     <string name="recurrence_label">Repeat</string>
-    <string name="repeat_date_hint">Repeat on (YYYY-MM-DD)</string>
-    <string name="due_date_hint">Due date (YYYY-MM-DD)</string>
-    <string name="recurrence_needs_dates">Choose both Repeat on and Due date when using repeat.</string>
+    <string name="repeat_date_hint">Repeat on (YYYY-MM-DD); due is the day before</string>
+    <string name="due_date_hint">Due (optional; with repeat, server uses day before repeat)</string>
+    <string name="recurrence_needs_repeat">Enter Repeat on (YYYY-MM-DD) when using repeat. Due is set to the day before.</string>
     <string name="add_to_list">List</string>
     <string name="subtask_title">Sub-task title</string>
     <string name="new_list_title">List name</string>

@@ -161,15 +161,27 @@ def _normalize_due_date(val):
     return v if v else None
 
 
+def _due_date_one_day_before_repeat(repeat_date_str):
+    """ISO date for the calendar day before repeat_date (due date for recurring tasks)."""
+    d = _parse_due_date(repeat_date_str)
+    if d is None:
+        return None
+    return (d - timedelta(days=1)).isoformat()
+
+
 def _coerce_recurrence_dates(recurrence, due_date, repeat_date):
     """
-    If recurrence is set, both due_date and repeat_date are required (when the task is
-    due vs when it reappears on the repeat cycle). If no recurrence, repeat_date is cleared.
+    If recurrence is set, repeat_date is required; due_date is always one day before
+    repeat_date (client-supplied due_date for recurring tasks is ignored).
+    If no recurrence, repeat_date is cleared and due_date is optional.
     """
     if recurrence:
-        if not due_date or not repeat_date:
-            raise ValueError("recurrence requires due_date and repeat_date")
-        return recurrence, due_date, repeat_date
+        if not repeat_date:
+            raise ValueError("recurrence requires repeat_date")
+        due_out = _due_date_one_day_before_repeat(repeat_date)
+        if not due_out:
+            raise ValueError("invalid repeat_date")
+        return recurrence, due_out, repeat_date
     return None, due_date, None
 
 
@@ -464,7 +476,12 @@ def handle_recurrence(db, todo_id):
 
     rec = todo["recurrence"]
     next_repeat = compute_next_due(rec, _repeat_anchor(todo))
-    next_due = compute_next_due(rec, todo["due_date"])
+    if not next_repeat:
+        return
+    rd = _parse_due_date(next_repeat)
+    if rd is None:
+        return
+    next_due = (rd - timedelta(days=1)).isoformat()
     db.execute(
         "UPDATE todos SET repeat_date = ?, due_date = ? WHERE id = ?",
         (next_repeat, next_due, todo_id),

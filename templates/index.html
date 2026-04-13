@@ -81,7 +81,7 @@
                 <label class="date-field-label">Repeat on</label>
                 <input type="date" name="repeat_date" class="js-repeat-date" value="{{ todo.repeat_date or '' }}" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
                 <label class="date-field-label">Due</label>
-                <input type="date" name="due_date" class="js-due-date" value="{{ todo.due_date or '' }}" aria-label="Due date" title="Due date">
+                <input type="date" name="due_date" class="js-due-date" value="{{ todo.due_date or '' }}" aria-label="Due date" title="With repeat: day before Repeat on (saved automatically)">
             </div>
         </form>
     </div>
@@ -126,7 +126,7 @@
                         <label class="date-field-label">Repeat on</label>
                         <input type="date" name="repeat_date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears">
                         <label class="date-field-label">Due</label>
-                        <input type="date" name="due_date" class="js-due-date" title="Due date" aria-label="Due date">
+                        <input type="date" name="due_date" class="js-due-date" title="With repeat: day before Repeat on (saved automatically)" aria-label="Due date">
                     </div>
                 </form>
             </div>
@@ -157,7 +157,7 @@
                     <label class="date-field-label">Repeat on</label>
                     <input type="date" name="repeat_date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears">
                     <label class="date-field-label">Due</label>
-                    <input type="date" name="due_date" class="js-due-date" title="Due date" aria-label="Due date">
+                    <input type="date" name="due_date" class="js-due-date" title="With repeat: day before Repeat on (saved automatically)" aria-label="Due date">
                 </div>
             </form>
         </div>
@@ -1204,7 +1204,7 @@
                         <label class="date-field-label" for="new-repeat-date">Repeat on</label>
                         <input type="date" name="repeat_date" id="new-repeat-date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
                         <label class="date-field-label" for="new-due-date">Due</label>
-                        <input type="date" name="due_date" id="new-due-date" class="js-due-date" aria-label="Due date (optional if no repeat)" title="Due date">
+                        <input type="date" name="due_date" id="new-due-date" class="js-due-date" aria-label="Due date" title="With repeat: set automatically to the day before Repeat on">
                     </div>
                 </form>
             </div>
@@ -1308,6 +1308,24 @@
             }
         }
 
+        function dayBeforeIso(isoDateStr) {
+            if (!isoDateStr || isoDateStr.length < 10) return '';
+            var d = new Date(isoDateStr.slice(0, 10) + 'T12:00:00');
+            if (isNaN(d.getTime())) return '';
+            d.setDate(d.getDate() - 1);
+            return d.toISOString().slice(0, 10);
+        }
+
+        function syncDueFromRepeat(form) {
+            var sel = form.querySelector('.js-recurrence-select');
+            var rep = form.querySelector('.js-repeat-date');
+            var due = form.querySelector('.js-due-date');
+            if (!sel || !rep || !due) return;
+            if (sel.value && String(sel.value).length > 0 && rep.value) {
+                due.value = dayBeforeIso(rep.value);
+            }
+        }
+
         function syncRecurrenceRequired(form) {
             if (!form) return;
             var sel = form.querySelector('.js-recurrence-select');
@@ -1316,7 +1334,20 @@
             if (!sel || !rep || !due) return;
             var on = !!(sel.value && String(sel.value).length > 0);
             rep.required = on;
-            due.required = on;
+            due.required = false;
+        }
+
+        function wireRepeatToDue(form) {
+            var sel = form.querySelector('.js-recurrence-select');
+            var rep = form.querySelector('.js-repeat-date');
+            if (!sel || !rep) return;
+            function onRepeatChange() {
+                syncRecurrenceRequired(form);
+                syncDueFromRepeat(form);
+            }
+            rep.addEventListener('change', onRepeatChange);
+            rep.addEventListener('input', onRepeatChange);
+            sel.addEventListener('change', onRepeatChange);
         }
 
         function initRecurrenceDateFields() {
@@ -1324,8 +1355,11 @@
                 var form = sel.closest('form');
                 if (!form) return;
                 syncRecurrenceRequired(form);
+                syncDueFromRepeat(form);
+                wireRepeatToDue(form);
                 sel.addEventListener('change', function () {
                     syncRecurrenceRequired(form);
+                    syncDueFromRepeat(form);
                 });
             });
         }

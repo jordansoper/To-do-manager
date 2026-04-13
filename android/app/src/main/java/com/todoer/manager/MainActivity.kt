@@ -287,7 +287,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * When repeat is set, both repeat-on and due dates are required. Otherwise due date is optional.
+     * When repeat is set, only repeat-on date is required; the server sets due to the day before.
+     * Otherwise due date is optional.
      * Returns null if validation failed (toast already shown).
      */
     private fun validatedRecurrenceDates(
@@ -298,11 +299,11 @@ class MainActivity : AppCompatActivity() {
         val repeat = repeatRaw?.trim()?.takeIf { it.isNotEmpty() }
         val due = dueRaw?.trim()?.takeIf { it.isNotEmpty() }
         if (recurrence != null) {
-            if (repeat == null || due == null) {
-                Toast.makeText(this, R.string.recurrence_needs_dates, Toast.LENGTH_LONG).show()
+            if (repeat == null) {
+                Toast.makeText(this, R.string.recurrence_needs_repeat, Toast.LENGTH_LONG).show()
                 return null
             }
-            return Pair(repeat, due)
+            return Pair(repeat, null)
         }
         return Pair(null, due)
     }
