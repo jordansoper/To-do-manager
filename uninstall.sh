@@ -13,6 +13,10 @@ echo "==> Removing systemd service..."
 rm -f /etc/systemd/system/${SERVICE_NAME}.service
 systemctl daemon-reload
 
+echo "==> Removing deploy helper..."
+rm -f /etc/sudoers.d/todo-manager-deploy
+rm -f /usr/local/bin/todo-manager-deploy
+
 echo "==> Removing application files..."
 rm -rf "$APP_DIR"
 

@@ -40,6 +40,20 @@ echo "==> Setting permissions..."
 mkdir -p "$APP_DIR/instance"
 chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 
+echo "==> Installing web-triggered deploy helper..."
+if [[ -f deploy-lxc.sh ]]; then
+  cp deploy-lxc.sh /usr/local/bin/todo-manager-deploy
+  chmod 755 /usr/local/bin/todo-manager-deploy
+  cat > /etc/sudoers.d/todo-manager-deploy <<'SUDOERS'
+todo ALL=(root) NOPASSWD: /usr/local/bin/todo-manager-deploy
+SUDOERS
+  chmod 440 /etc/sudoers.d/todo-manager-deploy
+  touch /var/log/todo-manager-deploy.log
+  chmod 644 /var/log/todo-manager-deploy.log
+else
+  echo "WARNING: deploy-lxc.sh not found; web-based update will not be available until you add it."
+fi
+
 echo "==> Installing systemd service..."
 cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
@@ -56,8 +70,7 @@ ExecStart=${APP_DIR}/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads
 Restart=on-failure
 RestartSec=5
 
-# Security hardening
-NoNewPrivileges=true
+# Security hardening (NoNewPrivileges omitted so the app can invoke passwordless sudo for web-based deploy; see deploy-lxc.sh)
 ProtectSystem=strict
 ReadWritePaths=${APP_DIR}/instance
 PrivateTmp=true

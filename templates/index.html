@@ -34,6 +34,9 @@
                 {% if todo.recurrence %}
                     <span class="badge badge-recurrence">{{ todo.recurrence }}</span>
                 {% endif %}
+                {% if todo.repeat_date %}
+                    <span class="badge badge-repeat-on">Repeats {{ todo.repeat_date }}</span>
+                {% endif %}
                 {% if todo.due_date %}
                     <span class="badge badge-due {{ 'overdue' if todo.due_date < now_date }}">Due {{ todo.due_date }}</span>
                 {% endif %}
@@ -62,14 +65,19 @@
                 <input type="text" name="description" value="{{ todo.description or '' }}" placeholder="Description">
             </div>
             <div class="form-row">
-                <select name="recurrence" aria-label="Repeat">
+                <select name="recurrence" class="js-recurrence-select" aria-label="Repeat">
                     <option value="">No repeat</option>
                     <option value="daily" {{ 'selected' if todo.recurrence == 'daily' }}>Daily</option>
                     <option value="weekly" {{ 'selected' if todo.recurrence == 'weekly' }}>Weekly</option>
                     <option value="monthly" {{ 'selected' if todo.recurrence == 'monthly' }}>Monthly</option>
                     <option value="yearly" {{ 'selected' if todo.recurrence == 'yearly' }}>Yearly</option>
                 </select>
-                <input type="date" name="due_date" value="{{ todo.due_date or '' }}" aria-label="Due date">
+            </div>
+            <div class="form-row todo-date-pair">
+                <label class="date-field-label">Repeat on</label>
+                <input type="date" name="repeat_date" class="js-repeat-date" value="{{ todo.repeat_date or '' }}" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
+                <label class="date-field-label">Due</label>
+                <input type="date" name="due_date" class="js-due-date" value="{{ todo.due_date or '' }}" aria-label="Due date" title="Due date">
             </div>
         </form>
     </div>
@@ -102,14 +110,19 @@
                         <button type="submit" class="btn btn-primary">Add</button>
                     </div>
                     <div class="form-row subtodo-add-meta">
-                        <select name="recurrence" aria-label="Repeat">
+                        <select name="recurrence" class="js-recurrence-select" aria-label="Repeat">
                             <option value="">No repeat</option>
                             <option value="daily">Daily</option>
                             <option value="weekly">Weekly</option>
                             <option value="monthly">Monthly</option>
                             <option value="yearly">Yearly</option>
                         </select>
-                        <input type="date" name="due_date" title="Due date" aria-label="Due date">
+                    </div>
+                    <div class="form-row subtodo-add-dates">
+                        <label class="date-field-label">Repeat on</label>
+                        <input type="date" name="repeat_date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears">
+                        <label class="date-field-label">Due</label>
+                        <input type="date" name="due_date" class="js-due-date" title="Due date" aria-label="Due date">
                     </div>
                 </form>
             </div>
@@ -128,14 +141,19 @@
                     <button type="submit" class="btn btn-primary">Add</button>
                 </div>
                 <div class="form-row subtodo-add-meta">
-                    <select name="recurrence" aria-label="Repeat">
+                    <select name="recurrence" class="js-recurrence-select" aria-label="Repeat">
                         <option value="">No repeat</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>
                         <option value="yearly">Yearly</option>
                     </select>
-                    <input type="date" name="due_date" title="Due date" aria-label="Due date">
+                </div>
+                <div class="form-row subtodo-add-dates">
+                    <label class="date-field-label">Repeat on</label>
+                    <input type="date" name="repeat_date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears">
+                    <label class="date-field-label">Due</label>
+                    <input type="date" name="due_date" class="js-due-date" title="Due date" aria-label="Due date">
                 </div>
             </form>
         </div>
@@ -503,6 +521,25 @@
             color: var(--danger);
         }
 
+        .badge-repeat-on {
+            background: rgba(34, 197, 94, 0.12);
+            color: var(--success);
+        }
+
+        .todo-date-pair,
+        .subtodo-add-dates {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.5rem 0.75rem;
+        }
+
+        .date-field-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            min-width: 4.5rem;
+        }
+
         .todo-actions {
             display: flex;
             gap: 0.25rem;
@@ -771,6 +808,59 @@
             margin-bottom: 0;
         }
 
+        .nav-deploy {
+            padding: 0 1rem;
+            margin-top: 1.25rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .nav-deploy h3 {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .nav-deploy-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            line-height: 1.4;
+            margin-bottom: 0.5rem;
+        }
+
+        .deploy-key-input {
+            width: 100%;
+            padding: 0.5rem 0.65rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg);
+            color: var(--text);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            box-sizing: border-box;
+        }
+
+        .deploy-update-btn {
+            width: 100%;
+        }
+
+        .nav-deploy-status {
+            font-size: 0.75rem;
+            margin-top: 0.5rem;
+            line-height: 1.4;
+        }
+
+        .nav-deploy-status.ok {
+            color: var(--success);
+        }
+
+        .nav-deploy-status.err {
+            color: var(--danger);
+        }
+
         .list-section {
             margin-bottom: 1.75rem;
         }
@@ -825,6 +915,15 @@
                 </div>
             </form>
         </div>
+        {% if deploy_enabled %}
+        <div class="nav-deploy">
+            <h3>Server update</h3>
+            <p class="nav-deploy-hint">Pulls the git repo, re-runs install, and restarts the service. Check the server log if something fails.</p>
+            <input type="password" id="deploy-update-key" class="deploy-key-input" placeholder="Update key" autocomplete="off" aria-label="Update key">
+            <button type="button" class="btn btn-primary deploy-update-btn" id="deploy-update-btn">Update server</button>
+            <p class="nav-deploy-status" id="deploy-update-status" hidden></p>
+        </div>
+        {% endif %}
     </aside>
 
     <div class="container">
@@ -864,14 +963,19 @@
                     <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
                 </div>
                 <div class="form-row">
-                    <select name="recurrence">
+                    <select name="recurrence" id="new-task-recurrence" class="js-recurrence-select">
                         <option value="">No repeat</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>
                         <option value="yearly">Yearly</option>
                     </select>
-                    <input type="date" name="due_date" title="Due date">
+                </div>
+                <div class="form-row todo-date-pair">
+                    <label class="date-field-label" for="new-repeat-date">Repeat on</label>
+                    <input type="date" name="repeat_date" id="new-repeat-date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
+                    <label class="date-field-label" for="new-due-date">Due</label>
+                    <input type="date" name="due_date" id="new-due-date" class="js-due-date" aria-label="Due date (optional if no repeat)" title="Due date">
                 </div>
             </form>
         </div>
@@ -995,9 +1099,87 @@
                 input.value = '';
                 input.focus();
             }
+            const form = wrap.querySelector('form.subtodo-add-form');
+            if (form) {
+                form.querySelectorAll('.js-repeat-date, .js-due-date').forEach(function (el) {
+                    el.value = '';
+                });
+                const sel = form.querySelector('.js-recurrence-select');
+                if (sel) sel.selectedIndex = 0;
+                syncRecurrenceRequired(form);
+            }
+        }
+
+        function syncRecurrenceRequired(form) {
+            if (!form) return;
+            var sel = form.querySelector('.js-recurrence-select');
+            var rep = form.querySelector('.js-repeat-date');
+            var due = form.querySelector('.js-due-date');
+            if (!sel || !rep || !due) return;
+            var on = !!(sel.value && String(sel.value).length > 0);
+            rep.required = on;
+            due.required = on;
+        }
+
+        function initRecurrenceDateFields() {
+            document.querySelectorAll('.js-recurrence-select').forEach(function (sel) {
+                var form = sel.closest('form');
+                if (!form) return;
+                syncRecurrenceRequired(form);
+                sel.addEventListener('change', function () {
+                    syncRecurrenceRequired(form);
+                });
+            });
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            initRecurrenceDateFields();
+
+            (function initDeployUpdate() {
+                var btn = document.getElementById('deploy-update-btn');
+                var keyInput = document.getElementById('deploy-update-key');
+                var statusEl = document.getElementById('deploy-update-status');
+                if (!btn || !keyInput || !statusEl) return;
+                btn.addEventListener('click', function () {
+                    var k = (keyInput.value || '').trim();
+                    if (!k) {
+                        statusEl.hidden = false;
+                        statusEl.className = 'nav-deploy-status err';
+                        statusEl.textContent = 'Enter the update key.';
+                        return;
+                    }
+                    statusEl.hidden = false;
+                    statusEl.className = 'nav-deploy-status';
+                    statusEl.textContent = 'Starting update…';
+                    btn.disabled = true;
+                    fetch('{{ url_for("admin_update") }}', {
+                        method: 'POST',
+                        headers: {
+                            'X-Update-Key': k,
+                            'Accept': 'application/json'
+                        },
+                        credentials: 'same-origin'
+                    }).then(function (r) {
+                        return r.json().then(function (body) {
+                            return { ok: r.ok, body: body };
+                        });
+                    }).then(function (res) {
+                        if (res.ok && res.body && res.body.ok) {
+                            statusEl.className = 'nav-deploy-status ok';
+                            statusEl.textContent = res.body.message || 'Update started.';
+                        } else {
+                            statusEl.className = 'nav-deploy-status err';
+                            statusEl.textContent = (res.body && res.body.error) ? res.body.error : 'Update failed.';
+                        }
+                    }).catch(function () {
+                        statusEl.className = 'nav-deploy-status err';
+                        statusEl.textContent = 'Request failed. Is the server reachable?';
+                    }).finally(function () {
+                        btn.disabled = false;
+                    });
+                });
+            })();
+
             (function initCollapsedSubtasks() {
                 function applyStoredState() {
                     collapsedSubtaskIdsRead().forEach(function (idStr) {

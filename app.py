@@ -2,12 +2,14 @@ import calendar
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 from functools import wraps
 from datetime import date, datetime, timedelta
 
 from flask import (
     Flask,
+    abort,
     g,
     has_request_context,
     jsonify,
@@ -23,6 +25,8 @@ from werkzeug.exceptions import HTTPException
 # (common cause of TemplateNotFound → 500 under systemd/gunicorn).
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 _INSTANCE_DIR = os.path.join(_APP_DIR, "instance")
+
+_DEPLOY_SCRIPT = "/usr/local/bin/todo-manager-deploy"
 
 app = Flask(
     __name__,
@@ -76,6 +80,7 @@ def init_db():
             parent_id INTEGER,
             recurrence TEXT CHECK(recurrence IN (NULL, 'daily', 'weekly', 'monthly', 'yearly')),
             due_date TEXT,
+            repeat_date TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             completed_at TEXT,
             sort_order INTEGER DEFAULT 0,
@@ -110,6 +115,15 @@ def migrate_lists_schema(db):
         db.execute("ALTER TABLE todos ADD COLUMN list_id INTEGER DEFAULT 1")
     if "sort_order" not in cols:
         db.execute("ALTER TABLE todos ADD COLUMN sort_order INTEGER DEFAULT 0")
+    if "repeat_date" not in cols:
+        db.execute("ALTER TABLE todos ADD COLUMN repeat_date TEXT")
+        db.execute(
+            """
+            UPDATE todos
+            SET repeat_date = due_date
+            WHERE recurrence IS NOT NULL AND due_date IS NOT NULL
+            """
+        )
 
 
 with app.app_context():
@@ -147,6 +161,18 @@ def _normalize_due_date(val):
     return v if v else None
 
 
+def _coerce_recurrence_dates(recurrence, due_date, repeat_date):
+    """
+    If recurrence is set, both due_date and repeat_date are required (when the task is
+    due vs when it reappears on the repeat cycle). If no recurrence, repeat_date is cleared.
+    """
+    if recurrence:
+        if not due_date or not repeat_date:
+            raise ValueError("recurrence requires due_date and repeat_date")
+        return recurrence, due_date, repeat_date
+    return None, due_date, None
+
+
 def todo_to_dict(row):
     d = {
         "id": row["id"],
@@ -159,6 +185,10 @@ def todo_to_dict(row):
         "created_at": row["created_at"],
         "completed_at": row["completed_at"],
     }
+    try:
+        d["repeat_date"] = row["repeat_date"]
+    except (KeyError, IndexError):
+        d["repeat_date"] = None
     try:
         d["sort_order"] = row["sort_order"]
     except (KeyError, IndexError):
@@ -335,16 +365,27 @@ def uncomplete_recursive(db, todo_id):
         uncomplete_recursive(db, child["id"])
 
 
+def _repeat_anchor(todo):
+    """Date that drives the repeat cycle (legacy rows may only have due_date)."""
+    try:
+        rd = todo["repeat_date"]
+    except (KeyError, IndexError):
+        rd = None
+    return rd or todo["due_date"]
+
+
 def handle_recurrence(db, todo_id):
-    """If a completed recurring todo was toggled complete, advance due date and reset for next cycle."""
+    """If a completed recurring todo was toggled complete, advance repeat and due dates and reset."""
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo or not todo["recurrence"] or not todo["completed"]:
         return
 
-    next_due = compute_next_due(todo["recurrence"], todo["due_date"])
+    rec = todo["recurrence"]
+    next_repeat = compute_next_due(rec, _repeat_anchor(todo))
+    next_due = compute_next_due(rec, todo["due_date"])
     db.execute(
-        "UPDATE todos SET due_date = ? WHERE id = ?",
-        (next_due, todo_id),
+        "UPDATE todos SET repeat_date = ?, due_date = ? WHERE id = ?",
+        (next_repeat, next_due, todo_id),
     )
     uncomplete_recursive(db, todo_id)
 
@@ -423,6 +464,7 @@ def api_health():
                 lists=sample_lists,
                 has_tasks=False,
                 now_date=today,
+                deploy_enabled=False,
             )
             render_template(
                 "index.html",
@@ -434,6 +476,7 @@ def api_health():
                 lists=sample_lists,
                 has_tasks=False,
                 now_date=today,
+                deploy_enabled=False,
             )
             return jsonify(ok=True, database="ok", templates="ok", render="ok")
         except Exception as e:
@@ -524,6 +567,13 @@ def api_post_todo():
     parent_id = data.get("parent_id")
     recurrence = _normalize_recurrence(data.get("recurrence"))
     due_date = _normalize_due_date(data.get("due_date"))
+    repeat_date = _normalize_due_date(data.get("repeat_date"))
+    try:
+        recurrence, due_date, repeat_date = _coerce_recurrence_dates(
+            recurrence, due_date, repeat_date
+        )
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
 
     db = get_db()
     if parent_id is not None:
@@ -541,10 +591,10 @@ def api_post_todo():
 
     cur = db.execute(
         """
-        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, repeat_date, list_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (title, description, parent_id, recurrence, due_date, list_id),
+        (title, description, parent_id, recurrence, due_date, repeat_date, list_id),
     )
     db.commit()
     return jsonify(ok=True, id=cur.lastrowid)
@@ -582,6 +632,54 @@ def api_toggle_todo(todo_id):
 # --- Routes ---
 
 
+def _deploy_key_authorized():
+    expected = os.environ.get("TODO_UPDATE_KEY")
+    if not expected:
+        return False
+    got = (request.headers.get("X-Update-Key") or "").strip()
+    if not got:
+        got = (request.form.get("update_key") or "").strip()
+    return got == expected
+
+
+@app.route("/admin/update", methods=["POST"])
+def admin_update():
+    """Trigger git pull + install.sh + service restart (see deploy-lxc.sh). Requires TODO_UPDATE_KEY."""
+    if not os.environ.get("TODO_UPDATE_KEY"):
+        abort(404)
+    if not _deploy_key_authorized():
+        return jsonify(ok=False, error="unauthorized"), 401
+    repo = (os.environ.get("TODO_UPDATE_REPO_DIR") or "/tmp/todo-manager").strip() or "/tmp/todo-manager"
+    if not os.path.isfile(_DEPLOY_SCRIPT):
+        app.logger.error("todo-manager-deploy missing at %s", _DEPLOY_SCRIPT)
+        return (
+            jsonify(
+                ok=False,
+                error="Deploy script not installed. Re-run install.sh on the server.",
+            ),
+            503,
+        )
+    try:
+        subprocess.Popen(
+            ["sudo", "-n", _DEPLOY_SCRIPT, repo],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd="/",
+        )
+    except FileNotFoundError:
+        return jsonify(ok=False, error="sudo not found"), 503
+    except OSError as e:
+        app.logger.exception("deploy trigger failed")
+        return jsonify(ok=False, error=str(e)), 500
+    app.logger.info("Server update triggered (repo=%s)", repo)
+    return jsonify(
+        ok=True,
+        message="Update started. Git pull and install run in the background; the service will restart shortly.",
+    )
+
+
 @app.route("/")
 def index():
     db = get_db()
@@ -603,6 +701,7 @@ def index():
             lists=all_lists,
             has_tasks=has_tasks,
             now_date=today,
+            deploy_enabled=bool(os.environ.get("TODO_UPDATE_KEY")),
         )
 
     try:
@@ -624,33 +723,39 @@ def index():
         lists=all_lists,
         has_tasks=bool(todos),
         now_date=today,
+        deploy_enabled=bool(os.environ.get("TODO_UPDATE_KEY")),
     )
 
 
 def process_overdue_recurrences(db):
-    """Auto-reset recurring todos that are past their due date."""
+    """Auto-reset recurring todos past their repeat cycle date (repeat_date, else due_date)."""
     try:
         today = datetime.utcnow().date().isoformat()
         overdue = db.execute(
             """
             SELECT * FROM todos
             WHERE recurrence IS NOT NULL
-              AND due_date IS NOT NULL
-              AND due_date < ?
+              AND COALESCE(repeat_date, due_date) IS NOT NULL
+              AND COALESCE(repeat_date, due_date) < ?
               AND completed = 1
             """,
             (today,),
         ).fetchall()
         for todo in overdue:
             try:
-                next_due = compute_next_due(todo["recurrence"], todo["due_date"])
+                rec = todo["recurrence"]
+                r = _repeat_anchor(todo)
+                d = todo["due_date"]
+                if not r or not d:
+                    continue
                 n = 0
-                while next_due and next_due < today and n < 4000:
+                while r < today and n < 4000:
                     n += 1
-                    next_due = compute_next_due(todo["recurrence"], next_due)
+                    r = compute_next_due(rec, r)
+                    d = compute_next_due(rec, d)
                 db.execute(
-                    "UPDATE todos SET due_date = ? WHERE id = ?",
-                    (next_due, todo["id"]),
+                    "UPDATE todos SET repeat_date = ?, due_date = ? WHERE id = ?",
+                    (r, d, todo["id"]),
                 )
                 uncomplete_recursive(db, todo["id"])
             except (TypeError, ValueError):
@@ -682,6 +787,13 @@ def add_todo():
     parent_id = request.form.get("parent_id") or None
     recurrence = _normalize_recurrence(request.form.get("recurrence"))
     due_date = _normalize_due_date(request.form.get("due_date"))
+    repeat_date = _normalize_due_date(request.form.get("repeat_date"))
+    try:
+        recurrence, due_date, repeat_date = _coerce_recurrence_dates(
+            recurrence, due_date, repeat_date
+        )
+    except ValueError:
+        return redirect_to_index()
 
     db = get_db()
     if parent_id:
@@ -699,10 +811,10 @@ def add_todo():
 
     cur = db.execute(
         """
-        INSERT INTO todos (title, description, parent_id, recurrence, due_date, list_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO todos (title, description, parent_id, recurrence, due_date, repeat_date, list_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (title, description, parent_id, recurrence, due_date, list_id),
+        (title, description, parent_id, recurrence, due_date, repeat_date, list_id),
     )
     db.commit()
     new_id = cur.lastrowid
@@ -767,6 +879,13 @@ def edit_todo(todo_id):
     description = request.form.get("description", "").strip()
     recurrence = _normalize_recurrence(request.form.get("recurrence"))
     due_date = _normalize_due_date(request.form.get("due_date"))
+    repeat_date = _normalize_due_date(request.form.get("repeat_date"))
+    try:
+        recurrence, due_date, repeat_date = _coerce_recurrence_dates(
+            recurrence, due_date, repeat_date
+        )
+    except ValueError:
+        return redirect_to_index()
 
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo:
@@ -774,10 +893,10 @@ def edit_todo(todo_id):
 
     db.execute(
         """
-        UPDATE todos SET title = ?, description = ?, recurrence = ?, due_date = ?
+        UPDATE todos SET title = ?, description = ?, recurrence = ?, due_date = ?, repeat_date = ?
         WHERE id = ?
         """,
-        (title, description, recurrence, due_date, todo_id),
+        (title, description, recurrence, due_date, repeat_date, todo_id),
     )
     db.commit()
     return redirect_to_index()

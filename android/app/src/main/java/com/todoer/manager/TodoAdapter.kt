@@ -105,6 +105,7 @@ class TodoAdapter(
         }
 
         val parts = mutableListOf<String>()
+        row.repeatDate?.let { parts.add("Repeats $it") }
         row.dueDate?.let { parts.add("Due $it") }
         row.recurrence?.let { parts.add(it) }
         if (row.hasChildren && row.subTotal > 0) {

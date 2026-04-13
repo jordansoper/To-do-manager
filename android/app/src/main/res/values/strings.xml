@@ -16,7 +16,7 @@
     <string name="channel_due">Due today</string>
     <string name="channel_recurring">Recurring tasks</string>
     <string name="notif_due_title">Due today</string>
-    <string name="notif_recurring_title">Task ready again</string>
+    <string name="notif_recurring_title">Task repeated</string>
     <string name="nav_all_tasks">All tasks</string>
     <string name="nav_add_list">New list</string>
     <string name="add_task">Add task</string>
@@ -24,7 +24,9 @@
     <string name="task_title">Title</string>
     <string name="task_description">Description (optional)</string>
     <string name="recurrence_label">Repeat</string>
+    <string name="repeat_date_hint">Repeat on (YYYY-MM-DD)</string>
     <string name="due_date_hint">Due date (YYYY-MM-DD)</string>
+    <string name="recurrence_needs_dates">Choose both Repeat on and Due date when using repeat.</string>
     <string name="add_to_list">List</string>
     <string name="subtask_title">Sub-task title</string>
     <string name="new_list_title">List name</string>

@@ -94,6 +94,29 @@ bash install.sh
 
 The install script is safe to re-run — it will update the app files and restart the service. Your database in `/opt/todo-manager/instance/todos.db` is preserved.
 
+### Web-based update (no SSH)
+
+After a normal install, `install.sh` installs a small helper at `/usr/local/bin/todo-manager-deploy` and grants the `todo` service user passwordless `sudo` for that script only. The app can trigger `git pull`, re-run `install.sh`, and restart the service from the **Lists** drawer in the web UI.
+
+1. **Set a secret** on the server (same place you might set `TODO_API_KEY`), for example in the systemd unit:
+
+   ```ini
+   [Service]
+   Environment="TODO_UPDATE_KEY=your-long-random-secret"
+   ```
+
+   Optional: if your git clone is not at `/tmp/todo-manager`, set:
+
+   ```ini
+   Environment="TODO_UPDATE_REPO_DIR=/path/to/git/clone"
+   ```
+
+2. **Reload** systemd and restart the app: `systemctl daemon-reload && systemctl restart todo-manager`
+
+3. Open the web UI, open the **Lists** menu, enter the key under **Server update**, and click **Update server**.
+
+If the button does not appear, `TODO_UPDATE_KEY` is not set (this avoids exposing the feature on unsecured instances). Logs from the deploy script go to `/var/log/todo-manager-deploy.log` on the container.
+
 ## Uninstalling
 
 ```bash

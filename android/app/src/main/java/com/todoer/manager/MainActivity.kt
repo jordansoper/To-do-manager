@@ -286,6 +286,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * When repeat is set, both repeat-on and due dates are required. Otherwise due date is optional.
+     * Returns null if validation failed (toast already shown).
+     */
+    private fun validatedRecurrenceDates(
+        recurrence: String?,
+        repeatRaw: String?,
+        dueRaw: String?
+    ): Pair<String?, String?>? {
+        val repeat = repeatRaw?.trim()?.takeIf { it.isNotEmpty() }
+        val due = dueRaw?.trim()?.takeIf { it.isNotEmpty() }
+        if (recurrence != null) {
+            if (repeat == null || due == null) {
+                Toast.makeText(this, R.string.recurrence_needs_dates, Toast.LENGTH_LONG).show()
+                return null
+            }
+            return Pair(repeat, due)
+        }
+        return Pair(null, due)
+    }
+
     private fun showAddTaskDialog() {
         val prefs = Prefs(this)
         val base = prefs.baseUrl?.trim().orEmpty()
@@ -328,7 +349,12 @@ class MainActivity : AppCompatActivity() {
                         val api = TodoApiFactory.create(base, prefs.apiKey?.trim())
                         val recIdx = dialogBinding.spinnerRecurrence.selectedItemPosition
                         val recurrence = recOptions.getOrNull(recIdx)?.takeIf { it.isNotEmpty() }
-                        val due = dialogBinding.inputDue.text?.toString()?.trim().orEmpty().takeIf { it.isNotEmpty() }
+                        val dates = validatedRecurrenceDates(
+                            recurrence,
+                            dialogBinding.inputRepeat.text?.toString(),
+                            dialogBinding.inputDue.text?.toString()
+                        ) ?: return@launch
+                        val (repeatDate, dueDate) = dates
                         val resolvedListId = if (showListPicker && cachedLists.isNotEmpty()) {
                             cachedLists[dialogBinding.spinnerList.selectedItemPosition].id
                         } else {
@@ -341,7 +367,8 @@ class MainActivity : AppCompatActivity() {
                                     ?.takeIf { it.isNotEmpty() },
                                 listId = resolvedListId,
                                 recurrence = recurrence,
-                                dueDate = due
+                                repeatDate = repeatDate,
+                                dueDate = dueDate
                             )
                         )
                         refresh()
@@ -383,13 +410,19 @@ class MainActivity : AppCompatActivity() {
                         val api = TodoApiFactory.create(base, prefs.apiKey?.trim())
                         val recIdx = d.spinnerRecurrence.selectedItemPosition
                         val recurrence = recOptions.getOrNull(recIdx)?.takeIf { it.isNotEmpty() }
-                        val due = d.inputDue.text?.toString()?.trim().orEmpty().takeIf { it.isNotEmpty() }
+                        val dates = validatedRecurrenceDates(
+                            recurrence,
+                            d.inputRepeat.text?.toString(),
+                            d.inputDue.text?.toString()
+                        ) ?: return@launch
+                        val (repeatDate, dueDate) = dates
                         api.addTodo(
                             AddTodoBody(
                                 title = title,
                                 parentId = parentId,
                                 recurrence = recurrence,
-                                dueDate = due
+                                repeatDate = repeatDate,
+                                dueDate = dueDate
                             )
                         )
                         refresh()

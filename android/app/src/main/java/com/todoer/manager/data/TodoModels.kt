@@ -25,6 +25,7 @@ data class TodoNode(
     @SerializedName("list_id") val listId: Int? = null,
     val recurrence: String? = null,
     @SerializedName("due_date") val dueDate: String? = null,
+    @SerializedName("repeat_date") val repeatDate: String? = null,
     val children: List<TodoNode>? = null
 )
 
@@ -55,7 +56,8 @@ data class AddTodoBody(
     @SerializedName("list_id") val listId: Int? = null,
     @SerializedName("parent_id") val parentId: Int? = null,
     val recurrence: String? = null,
-    @SerializedName("due_date") val dueDate: String? = null
+    @SerializedName("due_date") val dueDate: String? = null,
+    @SerializedName("repeat_date") val repeatDate: String? = null
 )
 
 data class AddListBody(
@@ -69,6 +71,7 @@ data class FlatRow(
     val depth: Int,
     val completed: Boolean,
     val dueDate: String?,
+    val repeatDate: String?,
     val recurrence: String?,
     val hasChildren: Boolean,
     val subDone: Int = 0,
@@ -99,6 +102,7 @@ fun flattenWithCollapse(
                 depth = depth,
                 completed = n.completed,
                 dueDate = n.dueDate,
+                repeatDate = n.repeatDate,
                 recurrence = n.recurrence,
                 hasChildren = hasCh,
                 subDone = done,
@@ -125,6 +129,7 @@ fun buildTaskGroups(nodes: List<TodoNode>?, collapsedIds: Set<Int>): List<Displa
             depth = 0,
             completed = n.completed,
             dueDate = n.dueDate,
+            repeatDate = n.repeatDate,
             recurrence = n.recurrence,
             hasChildren = hasCh,
             subDone = done,
