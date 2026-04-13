@@ -202,7 +202,11 @@ def todo_to_dict(row):
 
 def get_children(db, parent_id):
     rows = db.execute(
-        "SELECT * FROM todos WHERE parent_id = ? ORDER BY sort_order, created_at",
+        """
+        SELECT * FROM todos
+        WHERE parent_id = ? AND completed = 0
+        ORDER BY sort_order, created_at
+        """,
         (parent_id,),
     ).fetchall()
     children = []
@@ -213,16 +217,64 @@ def get_children(db, parent_id):
     return children
 
 
+def build_subtask_stats(db, list_id=None):
+    """Per parent_id: done count and total subtasks (for progress while active list hides completed)."""
+    if list_id is None:
+        rows = db.execute(
+            """
+            SELECT parent_id,
+                   SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS done,
+                   COUNT(*) AS total
+            FROM todos WHERE parent_id IS NOT NULL
+            GROUP BY parent_id
+            """
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """
+            SELECT parent_id,
+                   SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) AS done,
+                   COUNT(*) AS total
+            FROM todos WHERE parent_id IS NOT NULL AND list_id = ?
+            GROUP BY parent_id
+            """,
+            (list_id,),
+        ).fetchall()
+    out = {}
+    for r in rows:
+        out[r["parent_id"]] = {
+            "done": int(r["done"] or 0),
+            "total": int(r["total"] or 0),
+        }
+    return out
+
+
+def enrich_tree_subtask_stats(tree, stats):
+    def walk(nodes):
+        for t in nodes:
+            s = stats.get(t["id"], {"done": 0, "total": 0})
+            t["sub_done"] = s["done"]
+            t["sub_total"] = s["total"]
+            ch = t.get("children") or []
+            if ch:
+                walk(ch)
+
+    walk(tree)
+
+
 def build_todo_tree(db, list_id=None):
-    """Build a tree of top-level todos with nested children, optionally scoped to a list."""
+    """Build a tree of incomplete todos only (completed items appear in bottom sections)."""
     if list_id is None:
         roots = db.execute(
-            "SELECT * FROM todos WHERE parent_id IS NULL ORDER BY list_id, sort_order, created_at"
+            """
+            SELECT * FROM todos WHERE parent_id IS NULL AND completed = 0
+            ORDER BY list_id, sort_order, created_at
+            """
         ).fetchall()
     else:
         roots = db.execute(
             """
-            SELECT * FROM todos WHERE parent_id IS NULL AND list_id = ?
+            SELECT * FROM todos WHERE parent_id IS NULL AND list_id = ? AND completed = 0
             ORDER BY sort_order, created_at
             """,
             (list_id,),
@@ -235,21 +287,51 @@ def build_todo_tree(db, list_id=None):
     return tree
 
 
+def get_completed_one_time(db, list_id):
+    rows = db.execute(
+        """
+        SELECT * FROM todos
+        WHERE list_id = ? AND completed = 1
+          AND (recurrence IS NULL OR recurrence = '')
+        ORDER BY COALESCE(completed_at, created_at) DESC, id DESC
+        """,
+        (list_id,),
+    ).fetchall()
+    return [todo_to_dict(r) for r in rows]
+
+
+def get_recurring_dormant(db, list_id):
+    rows = db.execute(
+        """
+        SELECT * FROM todos
+        WHERE list_id = ? AND completed = 1
+          AND recurrence IS NOT NULL AND recurrence != ''
+        ORDER BY repeat_date ASC, id
+        """,
+        (list_id,),
+    ).fetchall()
+    return [todo_to_dict(r) for r in rows]
+
+
 def get_all_lists(db):
     rows = db.execute("SELECT * FROM lists ORDER BY sort_order, id").fetchall()
     return [{"id": r["id"], "name": r["name"], "sort_order": r["sort_order"]} for r in rows]
 
 
 def get_list_sections(db):
-    """For 'all tasks' view: each list with its own todo tree."""
+    """For 'all tasks' view: each list with its own active tree and completed buckets."""
     sections = []
     for lst in get_all_lists(db):
         lid = lst["id"]
+        tree = build_todo_tree(db, list_id=lid)
+        enrich_tree_subtask_stats(tree, build_subtask_stats(db, lid))
         sections.append(
             {
                 "id": lid,
                 "name": lst["name"],
-                "todos": build_todo_tree(db, list_id=lid),
+                "todos": tree,
+                "completed_one_time": get_completed_one_time(db, lid),
+                "recurring_waiting": get_recurring_dormant(db, lid),
             }
         )
     return sections
@@ -375,7 +457,7 @@ def _repeat_anchor(todo):
 
 
 def handle_recurrence(db, todo_id):
-    """If a completed recurring todo was toggled complete, advance repeat and due dates and reset."""
+    """Advance next repeat/due dates; task stays completed until repeat_date (see process_overdue_recurrences)."""
     todo = db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     if not todo or not todo["recurrence"] or not todo["completed"]:
         return
@@ -387,7 +469,6 @@ def handle_recurrence(db, todo_id):
         "UPDATE todos SET repeat_date = ?, due_date = ? WHERE id = ?",
         (next_repeat, next_due, todo_id),
     )
-    uncomplete_recursive(db, todo_id)
 
 
 # --- API (mobile app) ---
@@ -465,11 +546,21 @@ def api_health():
                 has_tasks=False,
                 now_date=today,
                 deploy_enabled=False,
+                completed_one_time=[],
+                recurring_waiting=[],
             )
             render_template(
                 "index.html",
                 todos=[],
-                list_sections=[{"id": 1, "name": "General", "todos": []}],
+                list_sections=[
+                    {
+                        "id": 1,
+                        "name": "General",
+                        "todos": [],
+                        "completed_one_time": [],
+                        "recurring_waiting": [],
+                    }
+                ],
                 view_mode="all",
                 current_list="all",
                 current_list_id=None,
@@ -477,6 +568,8 @@ def api_health():
                 has_tasks=False,
                 now_date=today,
                 deploy_enabled=False,
+                completed_one_time=[],
+                recurring_waiting=[],
             )
             return jsonify(ok=True, database="ok", templates="ok", render="ok")
         except Exception as e:
@@ -506,7 +599,13 @@ def api_list_todos():
             server_time=now,
             mode="all",
             sections=[
-                {"id": s["id"], "name": s["name"], "todos": s["todos"]}
+                {
+                    "id": s["id"],
+                    "name": s["name"],
+                    "todos": s["todos"],
+                    "completed_one_time": s["completed_one_time"],
+                    "recurring_waiting": s["recurring_waiting"],
+                }
                 for s in sections
             ],
         )
@@ -518,17 +617,23 @@ def api_list_todos():
         if not db.execute("SELECT 1 FROM lists WHERE id = ?", (lid,)).fetchone():
             lid = 1
         todos = build_todo_tree(db, list_id=lid)
+        enrich_tree_subtask_stats(todos, build_subtask_stats(db, lid))
         return jsonify(
             server_time=now,
             mode="single",
             list_id=lid,
             todos=todos,
+            completed_one_time=get_completed_one_time(db, lid),
+            recurring_waiting=get_recurring_dormant(db, lid),
         )
     todos = build_todo_tree(db)
+    enrich_tree_subtask_stats(todos, build_subtask_stats(db, None))
     return jsonify(
         server_time=now,
         mode="legacy",
         todos=todos,
+        completed_one_time=[],
+        recurring_waiting=[],
     )
 
 
@@ -690,7 +795,12 @@ def index():
 
     if list_param == "all":
         sections = get_list_sections(db)
-        has_tasks = any(len(s["todos"]) > 0 for s in sections)
+        has_tasks = any(
+            len(s["todos"]) > 0
+            or len(s["completed_one_time"]) > 0
+            or len(s["recurring_waiting"]) > 0
+            for s in sections
+        )
         return render_template(
             "index.html",
             todos=[],
@@ -702,6 +812,8 @@ def index():
             has_tasks=has_tasks,
             now_date=today,
             deploy_enabled=bool(os.environ.get("TODO_UPDATE_KEY")),
+            completed_one_time=[],
+            recurring_waiting=[],
         )
 
     try:
@@ -713,6 +825,10 @@ def index():
         list_id = 1
 
     todos = build_todo_tree(db, list_id=list_id)
+    enrich_tree_subtask_stats(todos, build_subtask_stats(db, list_id))
+    completed_one_time = get_completed_one_time(db, list_id)
+    recurring_waiting = get_recurring_dormant(db, list_id)
+    has_tasks = bool(todos) or bool(completed_one_time) or bool(recurring_waiting)
     return render_template(
         "index.html",
         todos=todos,
@@ -721,41 +837,33 @@ def index():
         current_list=str(list_id),
         current_list_id=list_id,
         lists=all_lists,
-        has_tasks=bool(todos),
+        has_tasks=has_tasks,
         now_date=today,
         deploy_enabled=bool(os.environ.get("TODO_UPDATE_KEY")),
+        completed_one_time=completed_one_time,
+        recurring_waiting=recurring_waiting,
     )
 
 
 def process_overdue_recurrences(db):
-    """Auto-reset recurring todos past their repeat cycle date (repeat_date, else due_date)."""
+    """Reopen dormant recurring tasks when repeat_date is reached (completed until then)."""
     try:
         today = datetime.utcnow().date().isoformat()
         overdue = db.execute(
             """
             SELECT * FROM todos
             WHERE recurrence IS NOT NULL
-              AND COALESCE(repeat_date, due_date) IS NOT NULL
-              AND COALESCE(repeat_date, due_date) < ?
+              AND repeat_date IS NOT NULL
+              AND repeat_date <= ?
               AND completed = 1
             """,
             (today,),
         ).fetchall()
         for todo in overdue:
             try:
-                rec = todo["recurrence"]
-                r = _repeat_anchor(todo)
-                d = todo["due_date"]
-                if not r or not d:
-                    continue
-                n = 0
-                while r < today and n < 4000:
-                    n += 1
-                    r = compute_next_due(rec, r)
-                    d = compute_next_due(rec, d)
                 db.execute(
-                    "UPDATE todos SET repeat_date = ?, due_date = ? WHERE id = ?",
-                    (r, d, todo["id"]),
+                    "UPDATE todos SET repeat_date = NULL WHERE id = ?",
+                    (todo["id"],),
                 )
                 uncomplete_recursive(db, todo["id"])
             except (TypeError, ValueError):

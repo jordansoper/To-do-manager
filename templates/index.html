@@ -35,7 +35,11 @@
                     <span class="badge badge-recurrence">{{ todo.recurrence }}</span>
                 {% endif %}
                 {% if todo.repeat_date %}
+                    {% if todo.completed and todo.recurrence %}
+                    <span class="badge badge-repeat-on">Returns {{ todo.repeat_date }}</span>
+                    {% else %}
                     <span class="badge badge-repeat-on">Repeats {{ todo.repeat_date }}</span>
+                    {% endif %}
                 {% endif %}
                 {% if todo.due_date %}
                     <span class="badge badge-due {{ 'overdue' if todo.due_date < now_date }}">Due {{ todo.due_date }}</span>
@@ -436,6 +440,39 @@
         }
 
         /* Todo List */
+        .bucket-details {
+            margin-top: 1.25rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .bucket-details > summary {
+            cursor: pointer;
+            list-style: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            padding: 0.35rem 0;
+        }
+
+        .bucket-details > summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .bucket-details > summary::before {
+            content: '▸ ';
+            display: inline-block;
+            transition: transform 0.15s ease;
+        }
+
+        .bucket-details[open] > summary::before {
+            transform: rotate(90deg);
+        }
+
+        .bucket-details .todo-list {
+            margin-top: 0.75rem;
+        }
+
         .todo-list {
             list-style: none;
         }
@@ -1052,14 +1089,36 @@
         {% if view_mode == 'all' %}
             {% if has_tasks %}
                 {% for section in list_sections %}
-                    {% if section.todos %}
+                    {% if section.todos or section.completed_one_time or section.recurring_waiting %}
                     <section class="list-section">
                         <h2 class="list-section-heading">{{ section.name }}</h2>
+                        {% if section.todos %}
                         <ul class="todo-list">
                             {% for todo in section.todos %}
                                 {{ render_todo(todo, 'all') }}
                             {% endfor %}
                         </ul>
+                        {% endif %}
+                        {% if section.completed_one_time %}
+                        <details class="bucket-details">
+                            <summary>Completed ({{ section.completed_one_time | length }})</summary>
+                            <ul class="todo-list">
+                                {% for todo in section.completed_one_time %}
+                                    {{ render_todo(todo, 'all') }}
+                                {% endfor %}
+                            </ul>
+                        </details>
+                        {% endif %}
+                        {% if section.recurring_waiting %}
+                        <details class="bucket-details">
+                            <summary>Repeating — returns next ({{ section.recurring_waiting | length }})</summary>
+                            <ul class="todo-list">
+                                {% for todo in section.recurring_waiting %}
+                                    {{ render_todo(todo, 'all') }}
+                                {% endfor %}
+                            </ul>
+                        </details>
+                        {% endif %}
                     </section>
                     {% endif %}
                 {% endfor %}
@@ -1075,10 +1134,30 @@
                     {{ render_todo(todo, current_list) }}
                 {% endfor %}
             </ul>
-            {% else %}
+            {% elif not completed_one_time and not recurring_waiting %}
             <div class="empty-state">
                 <p>No tasks yet. Tap <strong>+</strong> in the corner to add one.</p>
             </div>
+            {% endif %}
+            {% if completed_one_time %}
+            <details class="bucket-details">
+                <summary>Completed ({{ completed_one_time | length }})</summary>
+                <ul class="todo-list">
+                    {% for todo in completed_one_time %}
+                        {{ render_todo(todo, current_list) }}
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+            {% if recurring_waiting %}
+            <details class="bucket-details">
+                <summary>Repeating — returns next ({{ recurring_waiting | length }})</summary>
+                <ul class="todo-list">
+                    {% for todo in recurring_waiting %}
+                        {{ render_todo(todo, current_list) }}
+                    {% endfor %}
+                </ul>
+            </details>
             {% endif %}
         {% endif %}
     </div>

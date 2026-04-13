@@ -7,13 +7,17 @@ data class TodosResponse(
     val mode: String? = null,
     val todos: List<TodoNode>? = null,
     val sections: List<TodoSection>? = null,
-    @SerializedName("list_id") val listId: Int? = null
+    @SerializedName("list_id") val listId: Int? = null,
+    @SerializedName("completed_one_time") val completedOneTime: List<TodoNode>? = null,
+    @SerializedName("recurring_waiting") val recurringWaiting: List<TodoNode>? = null
 )
 
 data class TodoSection(
     val id: Int,
     val name: String,
-    val todos: List<TodoNode>
+    val todos: List<TodoNode>,
+    @SerializedName("completed_one_time") val completedOneTime: List<TodoNode>? = null,
+    @SerializedName("recurring_waiting") val recurringWaiting: List<TodoNode>? = null
 )
 
 data class TodoNode(
@@ -26,6 +30,8 @@ data class TodoNode(
     val recurrence: String? = null,
     @SerializedName("due_date") val dueDate: String? = null,
     @SerializedName("repeat_date") val repeatDate: String? = null,
+    @SerializedName("sub_done") val subDone: Int = 0,
+    @SerializedName("sub_total") val subTotal: Int = 0,
     val children: List<TodoNode>? = null
 )
 
@@ -94,7 +100,8 @@ fun flattenWithCollapse(
     for (n in nodes) {
         val ch = n.children.orEmpty()
         val hasCh = ch.isNotEmpty()
-        val done = ch.count { it.completed }
+        val subTotal = if (n.subTotal > 0) n.subTotal else ch.size
+        val subDone = if (n.subTotal > 0) n.subDone else ch.count { it.completed }
         out.add(
             FlatRow(
                 id = n.id,
@@ -105,12 +112,12 @@ fun flattenWithCollapse(
                 repeatDate = n.repeatDate,
                 recurrence = n.recurrence,
                 hasChildren = hasCh,
-                subDone = done,
-                subTotal = ch.size
+                subDone = subDone,
+                subTotal = subTotal
             )
         )
         if (hasCh && n.id !in collapsedIds) {
-            out.addAll(flattenWithCollapse(n.children, depth + 1, collapsedIds))
+            out.addAll(flattenWithCollapse(ch, depth + 1, collapsedIds))
         }
     }
     return out
@@ -122,7 +129,8 @@ fun buildTaskGroups(nodes: List<TodoNode>?, collapsedIds: Set<Int>): List<Displa
     for (n in nodes) {
         val ch = n.children.orEmpty()
         val hasCh = ch.isNotEmpty()
-        val done = ch.count { it.completed }
+        val subTotal = if (n.subTotal > 0) n.subTotal else ch.size
+        val subDone = if (n.subTotal > 0) n.subDone else ch.count { it.completed }
         val root = FlatRow(
             id = n.id,
             title = n.title,
@@ -132,8 +140,8 @@ fun buildTaskGroups(nodes: List<TodoNode>?, collapsedIds: Set<Int>): List<Displa
             repeatDate = n.repeatDate,
             recurrence = n.recurrence,
             hasChildren = hasCh,
-            subDone = done,
-            subTotal = ch.size
+            subDone = subDone,
+            subTotal = subTotal
         )
         val descendants = if (hasCh && n.id !in collapsedIds) {
             flattenWithCollapse(ch, 1, collapsedIds)
@@ -143,6 +151,22 @@ fun buildTaskGroups(nodes: List<TodoNode>?, collapsedIds: Set<Int>): List<Displa
         out.add(DisplayRow.TaskGroup(root, descendants))
     }
     return out
+}
+
+private fun bucketTaskGroup(t: TodoNode): DisplayRow.TaskGroup {
+    val fr = FlatRow(
+        id = t.id,
+        title = t.title,
+        depth = 0,
+        completed = true,
+        dueDate = t.dueDate,
+        repeatDate = t.repeatDate,
+        recurrence = t.recurrence,
+        hasChildren = false,
+        subDone = 0,
+        subTotal = 0
+    )
+    return DisplayRow.TaskGroup(fr, emptyList())
 }
 
 fun buildDisplayRows(
@@ -157,12 +181,46 @@ fun buildDisplayRows(
             for (s in sec) {
                 out.add(DisplayRow.Section(s.name))
                 out.addAll(buildTaskGroups(s.todos, collapsedIds))
+                val done = s.completedOneTime.orEmpty()
+                if (done.isNotEmpty()) {
+                    out.add(DisplayRow.Section("Completed (${done.size})"))
+                    for (t in done) out.add(bucketTaskGroup(t))
+                }
+                val wait = s.recurringWaiting.orEmpty()
+                if (wait.isNotEmpty()) {
+                    out.add(DisplayRow.Section("Repeating — returns next (${wait.size})"))
+                    for (t in wait) out.add(bucketTaskGroup(t))
+                }
             }
             out
         }
-        "single" -> buildTaskGroups(response.todos, collapsedIds)
+        "single" -> {
+            val out = ArrayList<DisplayRow>()
+            out.addAll(buildTaskGroups(response.todos, collapsedIds))
+            val done = response.completedOneTime.orEmpty()
+            if (done.isNotEmpty()) {
+                out.add(DisplayRow.Section("Completed (${done.size})"))
+                for (t in done) out.add(bucketTaskGroup(t))
+            }
+            val wait = response.recurringWaiting.orEmpty()
+            if (wait.isNotEmpty()) {
+                out.add(DisplayRow.Section("Repeating — returns next (${wait.size})"))
+                for (t in wait) out.add(bucketTaskGroup(t))
+            }
+            out
+        }
         else -> buildTaskGroups(response.todos, collapsedIds)
     }
+}
+
+/** Root ids of recurring tasks that are completed until repeat_date (not on the active list). */
+fun dormantRecurringRootIds(response: TodosResponse): Set<Int> {
+    val nodes = when (response.mode) {
+        "all" -> response.sections.orEmpty().flatMap { it.recurringWaiting.orEmpty() }
+        "single" -> response.recurringWaiting.orEmpty()
+        else -> emptyList()
+    }
+    return nodes.map { it.id }.toSet()
 }
 
 /** All root todos (for notifications) from any response shape */

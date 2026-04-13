@@ -16,7 +16,8 @@
     <string name="channel_due">Due today</string>
     <string name="channel_recurring">Recurring tasks</string>
     <string name="notif_due_title">Due today</string>
-    <string name="notif_recurring_title">Task repeated</string>
+    <string name="notif_recurring_title">New task to complete</string>
+    <string name="notif_recurring_text">%1$s — open your list to finish it.</string>
     <string name="nav_all_tasks">All tasks</string>
     <string name="nav_add_list">New list</string>
     <string name="add_task">Add task</string>

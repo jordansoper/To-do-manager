@@ -11,6 +11,7 @@ import com.todoer.manager.data.Prefs
 import com.todoer.manager.data.RootSnap
 import com.todoer.manager.data.TodosResponse
 import com.todoer.manager.data.collectDueToday
+import com.todoer.manager.data.dormantRecurringRootIds
 import com.todoer.manager.data.rootSnapshots
 import com.todoer.manager.data.rootsForNotifications
 import java.time.LocalDate
@@ -45,6 +46,7 @@ object NotificationHelper {
         val gson = Gson()
         val type = object : TypeToken<Map<String, RootSnap>>() {}.type
         val oldJson = prefs.lastRootSnapshotJson()
+        val oldDormant = prefs.lastDormantRecurringIds()
         val oldMap: Map<Int, RootSnap> =
             if (oldJson.isNullOrBlank()) {
                 emptyMap()
@@ -54,12 +56,32 @@ object NotificationHelper {
             }
         val newMap = rootSnapshots(roots)
 
+        fun saveDormantSnapshot() {
+            val ids = dormantRecurringRootIds(response).map { it.toString() }.toSet()
+            prefs.setLastDormantRecurringIds(ids)
+        }
+
+        val recurringNotified = mutableSetOf<Int>()
+
+        if (oldDormant.isNotEmpty()) {
+            for (r in roots) {
+                if (!oldDormant.contains(r.id.toString())) continue
+                if (r.completed) continue
+                if (r.recurrence.isNullOrBlank()) continue
+                if (recurringNotified.add(r.id)) {
+                    showRecurring(context, r.id, r.title)
+                }
+            }
+        }
+
         if (oldMap.isNotEmpty()) {
             for ((id, new) in newMap) {
                 val old = oldMap[id] ?: continue
                 if (old.completed && !new.completed && !new.recurrence.isNullOrBlank()) {
-                    val title = roots.find { it.id == id }?.title ?: "Task"
-                    showRecurring(context, id, title)
+                    if (recurringNotified.add(id)) {
+                        val title = roots.find { it.id == id }?.title ?: "Task"
+                        showRecurring(context, id, title)
+                    }
                 }
             }
         }
@@ -77,6 +99,7 @@ object NotificationHelper {
                 today,
                 dueList.map { it.first.toString() }.toSet()
             )
+            saveDormantSnapshot()
             return
         }
 
@@ -92,6 +115,7 @@ object NotificationHelper {
             }
         }
         prefs.markDueNotified(today, notified)
+        saveDormantSnapshot()
     }
 
     private fun showDue(context: Context, id: Int, title: String) {
@@ -110,7 +134,7 @@ object NotificationHelper {
         val n = NotificationCompat.Builder(context, CH_REC)
             .setSmallIcon(R.drawable.ic_stat_notification)
             .setContentTitle(context.getString(R.string.notif_recurring_title))
-            .setContentText(title)
+            .setContentText(context.getString(R.string.notif_recurring_text, title))
             .setAutoCancel(true)
             .build()
         nm.notify(20_000 + id, n)

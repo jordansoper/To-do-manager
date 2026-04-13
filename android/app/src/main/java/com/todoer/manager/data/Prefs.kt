@@ -35,4 +35,12 @@ class Prefs(context: Context) {
             .putStringSet("due_notif_ids", ids)
             .apply()
     }
+
+    /** Root todo ids (strings) that are completed recurring until repeat_date. */
+    fun lastDormantRecurringIds(): Set<String> =
+        p.getStringSet("dormant_recurring_ids", emptySet()) ?: emptySet()
+
+    fun setLastDormantRecurringIds(ids: Set<String>) {
+        p.edit().putStringSet("dormant_recurring_ids", ids).apply()
+    }
 }
