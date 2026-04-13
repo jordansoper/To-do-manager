@@ -202,6 +202,7 @@
         .container {
             max-width: 720px;
             margin: 0 auto;
+            padding-bottom: 5rem;
         }
 
         h1 {
@@ -211,6 +212,74 @@
             color: var(--text);
         }
 
+        /* Floating add button (matches Android FAB) */
+        .fab-add {
+            position: fixed;
+            right: max(1rem, env(safe-area-inset-right));
+            bottom: max(1rem, env(safe-area-inset-bottom));
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            border: none;
+            background: var(--accent);
+            color: #fff;
+            font-size: 1.75rem;
+            font-weight: 300;
+            line-height: 1;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+            z-index: 120;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, transform 0.15s;
+        }
+
+        .fab-add:hover {
+            background: var(--accent-hover);
+            transform: scale(1.04);
+        }
+
+        .fab-add:focus-visible {
+            outline: 2px solid var(--accent-hover);
+            outline-offset: 3px;
+        }
+
+        body.add-task-open .fab-add {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        body.add-task-open {
+            overflow: hidden;
+        }
+
+        /* Add task modal (opened from FAB) */
+        .add-task-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 300;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            padding-bottom: max(1rem, env(safe-area-inset-bottom));
+            background: rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
+        }
+
+        .add-task-overlay.open {
+            display: flex;
+        }
+
+        .add-task-dialog {
+            width: 100%;
+            max-width: 720px;
+            max-height: min(90vh, 900px);
+            overflow-y: auto;
+            margin: auto;
+        }
+
         /* Add Todo Form */
         .add-form {
             background: var(--surface);
@@ -218,6 +287,48 @@
             border-radius: var(--radius);
             padding: 1.25rem;
             margin-bottom: 1.5rem;
+        }
+
+        .add-form--modal {
+            margin-bottom: 0;
+        }
+
+        .add-form-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .add-form-header h2 {
+            margin-bottom: 0;
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text);
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        .add-form-close {
+            flex-shrink: 0;
+            width: 2.25rem;
+            height: 2.25rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg);
+            color: var(--text-muted);
+            font-size: 1.35rem;
+            line-height: 1;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .add-form-close:hover {
+            background: var(--surface-hover);
+            color: var(--text);
         }
 
         .add-form h2 {
@@ -937,49 +1048,6 @@
         <p class="view-subtitle">{% for L in lists %}{% if L.id == current_list_id %}{{ L.name }}{% endif %}{% endfor %}</p>
         {% endif %}
 
-        <!-- Add Todo Form -->
-        <div class="add-form">
-            <h2>New Task</h2>
-            <form method="POST" action="/add">
-                {% if view_mode == 'all' %}
-                <input type="hidden" name="list" value="all">
-                <div class="form-row">
-                    <label for="target-list-select" style="color:var(--text-muted);font-size:0.8rem;align-self:center;">Add to list</label>
-                    <select name="target_list_id" id="target-list-select" style="flex:1;">
-                        {% for L in lists %}
-                        <option value="{{ L.id }}">{{ L.name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                {% else %}
-                <input type="hidden" name="list" value="{{ current_list }}">
-                <input type="hidden" name="list_id" value="{{ current_list_id }}">
-                {% endif %}
-                <div class="form-row">
-                    <input type="text" name="title" placeholder="What needs to be done?" required autocomplete="off">
-                    <button type="submit" class="btn btn-primary">Add</button>
-                </div>
-                <div class="form-row">
-                    <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
-                </div>
-                <div class="form-row">
-                    <select name="recurrence" id="new-task-recurrence" class="js-recurrence-select">
-                        <option value="">No repeat</option>
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="yearly">Yearly</option>
-                    </select>
-                </div>
-                <div class="form-row todo-date-pair">
-                    <label class="date-field-label" for="new-repeat-date">Repeat on</label>
-                    <input type="date" name="repeat_date" id="new-repeat-date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
-                    <label class="date-field-label" for="new-due-date">Due</label>
-                    <input type="date" name="due_date" id="new-due-date" class="js-due-date" aria-label="Due date (optional if no repeat)" title="Due date">
-                </div>
-            </form>
-        </div>
-
         <!-- Todo List -->
         {% if view_mode == 'all' %}
             {% if has_tasks %}
@@ -997,7 +1065,7 @@
                 {% endfor %}
             {% else %}
             <div class="empty-state">
-                <p>No tasks yet. Add one above to get started.</p>
+                <p>No tasks yet. Tap <strong>+</strong> in the corner to add one.</p>
             </div>
             {% endif %}
         {% else %}
@@ -1009,11 +1077,62 @@
             </ul>
             {% else %}
             <div class="empty-state">
-                <p>No tasks yet. Add one above to get started.</p>
+                <p>No tasks yet. Tap <strong>+</strong> in the corner to add one.</p>
             </div>
             {% endif %}
         {% endif %}
     </div>
+
+    <div class="add-task-overlay" id="add-task-overlay">
+        <div class="add-task-dialog" role="dialog" aria-modal="true" aria-labelledby="add-task-heading">
+            <div class="add-form add-form--modal">
+                <div class="add-form-header">
+                    <h2 id="add-task-heading">New task</h2>
+                    <button type="button" class="add-form-close" id="add-task-close" aria-label="Close">×</button>
+                </div>
+                <form method="POST" action="/add" id="add-task-form">
+                    {% if view_mode == 'all' %}
+                    <input type="hidden" name="list" value="all">
+                    <div class="form-row">
+                        <label for="target-list-select" style="color:var(--text-muted);font-size:0.8rem;align-self:center;">Add to list</label>
+                        <select name="target_list_id" id="target-list-select" style="flex:1;">
+                            {% for L in lists %}
+                            <option value="{{ L.id }}">{{ L.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% else %}
+                    <input type="hidden" name="list" value="{{ current_list }}">
+                    <input type="hidden" name="list_id" value="{{ current_list_id }}">
+                    {% endif %}
+                    <div class="form-row">
+                        <input type="text" name="title" id="add-task-title-input" placeholder="What needs to be done?" required autocomplete="off">
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </div>
+                    <div class="form-row">
+                        <input type="text" name="description" placeholder="Description (optional)" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <select name="recurrence" id="new-task-recurrence" class="js-recurrence-select">
+                            <option value="">No repeat</option>
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="yearly">Yearly</option>
+                        </select>
+                    </div>
+                    <div class="form-row todo-date-pair">
+                        <label class="date-field-label" for="new-repeat-date">Repeat on</label>
+                        <input type="date" name="repeat_date" id="new-repeat-date" class="js-repeat-date" aria-label="Repeat on" title="When the task reappears on the repeat cycle">
+                        <label class="date-field-label" for="new-due-date">Due</label>
+                        <input type="date" name="due_date" id="new-due-date" class="js-due-date" aria-label="Due date (optional if no repeat)" title="Due date">
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <button type="button" class="fab-add" id="fab-add-task" title="Add task" aria-label="Add task">+</button>
 
     <script>
         (function () {
@@ -1133,6 +1252,43 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            (function initAddTaskFab() {
+                var overlay = document.getElementById('add-task-overlay');
+                var fab = document.getElementById('fab-add-task');
+                var closeBtn = document.getElementById('add-task-close');
+                var titleInput = document.getElementById('add-task-title-input');
+                if (!overlay || !fab) return;
+                function openAddTask() {
+                    overlay.classList.add('open');
+                    document.body.classList.add('add-task-open');
+                    if (titleInput) {
+                        titleInput.focus();
+                    }
+                }
+                function closeAddTask() {
+                    overlay.classList.remove('open');
+                    document.body.classList.remove('add-task-open');
+                }
+                fab.addEventListener('click', function () {
+                    openAddTask();
+                });
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', function () {
+                        closeAddTask();
+                    });
+                }
+                overlay.addEventListener('click', function (e) {
+                    if (e.target === overlay) {
+                        closeAddTask();
+                    }
+                });
+                document.addEventListener('keydown', function (e) {
+                    if (e.key === 'Escape' && overlay.classList.contains('open')) {
+                        closeAddTask();
+                    }
+                });
+            })();
+
             initRecurrenceDateFields();
 
             (function initDeployUpdate() {

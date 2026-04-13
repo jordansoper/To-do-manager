@@ -12,7 +12,7 @@ SERVICE_NAME="todo-manager"
 
 echo "==> Installing system dependencies..."
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip git
+apt-get install -y -qq python3 python3-venv python3-pip git sudo
 
 echo "==> Creating application user..."
 if ! id "$APP_USER" &>/dev/null; then
@@ -44,9 +44,9 @@ echo "==> Installing web-triggered deploy helper..."
 if [[ -f deploy-lxc.sh ]]; then
   cp deploy-lxc.sh /usr/local/bin/todo-manager-deploy
   chmod 755 /usr/local/bin/todo-manager-deploy
-  cat > /etc/sudoers.d/todo-manager-deploy <<'SUDOERS'
-todo ALL=(root) NOPASSWD: /usr/local/bin/todo-manager-deploy
-SUDOERS
+  # Minimal images may lack /etc/sudoers.d until the sudo package is installed (see apt-get above).
+  install -d -m 0755 /etc/sudoers.d
+  printf '%s\n' 'todo ALL=(root) NOPASSWD: /usr/local/bin/todo-manager-deploy' > /etc/sudoers.d/todo-manager-deploy
   chmod 440 /etc/sudoers.d/todo-manager-deploy
   touch /var/log/todo-manager-deploy.log
   chmod 644 /var/log/todo-manager-deploy.log
